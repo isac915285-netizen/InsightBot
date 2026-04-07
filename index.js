@@ -1,10 +1,8 @@
 // index.js
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, REST, Routes } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
 
-// Configuração do cliente
+// Configuração do cliente com opções de reconexão
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -12,7 +10,12 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.DirectMessages
-    ]
+    ],
+    // Configurações de reconexão
+    rest: {
+        timeout: 15000,
+        retries: 3
+    }
 });
 
 // Variáveis de ambiente
@@ -30,24 +33,21 @@ if (!OWNER_ID) {
     process.exit(1);
 }
 
-// Banco de dados em memória (para produção, use um banco de dados real)
+// Banco de dados em memória
 class Database {
     constructor() {
-        this.suggestionsChannel = new Map(); // guildId -> channelId
-        this.suggestions = new Map(); // suggestionId -> suggestionData
-        this.suggestionCounter = new Map(); // guildId -> lastId
-        this.userSuggestions = new Map(); // userId -> [suggestionIds]
-        this.suggestionVotes = new Map(); // suggestionId -> { userIds: Set, votes: Map }
-        this.suggestionStatus = new Map(); // suggestionId -> status
-        this.suggestionHistory = new Map(); // suggestionId -> history
-        this.moderationLogs = new Map(); // guildId -> logs
-        this.bannedUsers = new Map(); // userId -> { reason, date, guildId }
-        this.cooldown = new Map(); // userId -> lastSuggestionTime
-        this.suggestionCategories = new Map(); // guildId -> categories
-        this.suggestionTags = new Map(); // suggestionId -> tags
-        this.userReputation = new Map(); // userId -> reputation
-        this.suggestionComments = new Map(); // suggestionId -> comments
-        this.suggestionMessageIds = new Map(); // suggestionId -> messageId
+        this.suggestionsChannel = new Map();
+        this.suggestions = new Map();
+        this.suggestionCounter = new Map();
+        this.userSuggestions = new Map();
+        this.suggestionVotes = new Map();
+        this.suggestionHistory = new Map();
+        this.moderationLogs = new Map();
+        this.bannedUsers = new Map();
+        this.cooldown = new Map();
+        this.userReputation = new Map();
+        this.suggestionComments = new Map();
+        this.suggestionMessageIds = new Map();
     }
 
     setSuggestionsChannel(guildId, channelId) {
@@ -59,7 +59,7 @@ class Database {
         return this.suggestionsChannel.get(guildId);
     }
 
-    createSuggestion(guildId, userId, content, category = 'geral', tags = []) {
+    createSuggestion(guildId, userId, content, category = 'geral') {
         const suggestionId = this.generateSuggestionId(guildId);
         const suggestionData = {
             id: suggestionId,
@@ -67,7 +67,6 @@ class Database {
             userId,
             content,
             category,
-            tags,
             createdAt: new Date(),
             status: 'pendente',
             votesUp: 0,
@@ -128,12 +127,10 @@ class Database {
         const previousVote = votes.get(userId);
 
         if (previousVote === voteType) {
-            // Remove o voto
             votes.delete(userId);
             if (voteType === 'up') suggestion.votesUp--;
             else suggestion.votesDown--;
         } else {
-            // Muda ou adiciona voto
             if (previousVote) {
                 if (previousVote === 'up') suggestion.votesUp--;
                 else suggestion.votesDown--;
@@ -181,10 +178,6 @@ class Database {
         return true;
     }
 
-    getSuggestionHistory(suggestionId) {
-        return this.suggestionHistory.get(suggestionId) || [];
-    }
-
     addComment(suggestionId, userId, comment) {
         if (!this.suggestionComments.has(suggestionId)) {
             this.suggestionComments.set(suggestionId, []);
@@ -207,35 +200,17 @@ class Database {
         return this.suggestionComments.get(suggestionId) || [];
     }
 
-    likeComment(suggestionId, commentId, userId) {
-        const comments = this.suggestionComments.get(suggestionId);
-        if (!comments) return false;
-        
-        const comment = comments.find(c => c.id === commentId);
-        if (!comment) return false;
-        
-        if (comment.likedBy.includes(userId)) {
-            comment.likes--;
-            comment.likedBy = comment.likedBy.filter(id => id !== userId);
-        } else {
-            comment.likes++;
-            comment.likedBy.push(userId);
-        }
-        
-        return true;
-    }
-
     addToCooldown(userId) {
         this.cooldown.set(userId, Date.now());
     }
 
-    isOnCooldown(userId, cooldownSeconds = 60) {
+    isOnCooldown(userId, cooldownSeconds = 30) {
         const lastTime = this.cooldown.get(userId);
         if (!lastTime) return false;
         return (Date.now() - lastTime) < (cooldownSeconds * 1000);
     }
 
-    getCooldownRemaining(userId, cooldownSeconds = 60) {
+    getCooldownRemaining(userId, cooldownSeconds = 30) {
         const lastTime = this.cooldown.get(userId);
         if (!lastTime) return 0;
         const elapsed = (Date.now() - lastTime) / 1000;
@@ -289,42 +264,14 @@ class Database {
     unbanUser(userId) {
         return this.bannedUsers.delete(userId);
     }
-
-    createCategory(guildId, name) {
-        if (!this.suggestionCategories.has(guildId)) {
-            this.suggestionCategories.set(guildId, []);
-        }
-        
-        const categories = this.suggestionCategories.get(guildId);
-        const category = { id: Date.now(), name, createdAt: new Date() };
-        categories.push(category);
-        return category;
-    }
-
-    getCategories(guildId) {
-        return this.suggestionCategories.get(guildId) || [];
-    }
-
-    deleteCategory(guildId, categoryId) {
-        const categories = this.suggestionCategories.get(guildId);
-        if (!categories) return false;
-        
-        const index = categories.findIndex(c => c.id === categoryId);
-        if (index === -1) return false;
-        
-        categories.splice(index, 1);
-        return true;
-    }
 }
 
 const db = new Database();
 
-// Função para verificar se o usuário é o owner
 function isOwner(userId) {
     return userId === OWNER_ID;
 }
 
-// Função para criar embed de sugestão
 function createSuggestionEmbed(suggestion, user) {
     const statusEmojis = {
         'pendente': '⏳',
@@ -353,48 +300,34 @@ function createSuggestionEmbed(suggestion, user) {
             { name: '👤 Autor', value: `<@${suggestion.userId}>`, inline: true },
             { name: '📂 Categoria', value: suggestion.category, inline: true },
             { name: '📅 Data', value: `<t:${Math.floor(suggestion.createdAt.getTime() / 1000)}:R>`, inline: true },
-            { name: '👍 Votos Positivos', value: `${suggestion.votesUp}`, inline: true },
-            { name: '👎 Votos Negativos', value: `${suggestion.votesDown}`, inline: true },
+            { name: '👍 Votos', value: `${suggestion.votesUp}`, inline: true },
+            { name: '👎 Votos', value: `${suggestion.votesDown}`, inline: true },
             { name: '📊 Status', value: `${statusEmojis[suggestion.status]} ${statusTexts[suggestion.status]}`, inline: true }
         )
         .setFooter({ text: `ID: ${suggestion.id}`, iconURL: user?.displayAvatarURL() })
         .setTimestamp();
     
-    if (suggestion.tags && suggestion.tags.length > 0) {
-        embed.addFields({ name: '🏷️ Tags', value: suggestion.tags.map(t => `#${t}`).join(' '), inline: false });
-    }
-    
     if (suggestion.rejectionReason) {
-        embed.addFields({ name: '❌ Motivo da Rejeição', value: suggestion.rejectionReason, inline: false });
-    }
-    
-    if (suggestion.implementedAt) {
-        embed.addFields({ name: '✅ Implementado em', value: `<t:${Math.floor(suggestion.implementedAt.getTime() / 1000)}:R>`, inline: true });
+        embed.addFields({ name: '❌ Motivo', value: suggestion.rejectionReason, inline: false });
     }
     
     return embed;
 }
 
-// Função para criar embed do canal de sugestões
 function createSuggestionsChannelEmbed() {
-    const embed = new EmbedBuilder()
+    return new EmbedBuilder()
         .setTitle('📝 Sistema de Sugestões')
-        .setDescription('Bem-vindo ao canal de sugestões! Aqui você pode compartilhar suas ideias para melhorar o servidor.')
+        .setDescription('Bem-vindo ao canal de sugestões! Compartilhe suas ideias para melhorar o servidor.')
         .setColor(0x5865F2)
         .addFields(
-            { name: '📌 Como funciona', value: 'Clique no botão abaixo para enviar uma sugestão. Sua sugestão será analisada pela equipe e votada pelos membros.', inline: false },
-            { name: '✅ Regras', value: '• Seja claro e específico\n• Explique o motivo da sugestão\n• Evite sugestões duplicadas\n• Seja respeitoso', inline: false },
-            { name: '⭐ Dicas', value: '• Sugestões bem elaboradas têm mais chances\n• Inclua exemplos se possível\n• Mostre como isso beneficia o servidor', inline: false },
-            { name: '🎯 Status', value: '• ⏳ Pendente: Aguardando análise\n• 🔍 Em análise: Sendo avaliado\n• ✅ Aprovado: Será implementado\n• ❌ Rejeitado: Não será implementado\n• 🎉 Implementado: Já foi adicionado', inline: false },
-            { name: '🏆 Reputação', value: 'Suas sugestões aprovadas aumentam sua reputação! Membros com alta reputação têm benefícios especiais.', inline: false }
+            { name: '📌 Como funciona', value: 'Clique no botão abaixo para enviar sua sugestão.', inline: false },
+            { name: '✅ Regras', value: '• Seja claro e específico\n• Explique o motivo\n• Evite sugestões duplicadas\n• Seja respeitoso', inline: false },
+            { name: '🎯 Status', value: '• ⏳ Pendente\n• ✅ Aprovado\n• ❌ Rejeitado\n• 🎉 Implementado', inline: false }
         )
-        .setFooter({ text: 'Clique no botão abaixo para enviar sua sugestão' })
+        .setFooter({ text: 'Clique no botão para enviar sua sugestão' })
         .setTimestamp();
-    
-    return embed;
 }
 
-// Função para criar embed de estatísticas
 function createStatsEmbed(guildId) {
     const suggestions = db.getAllSuggestions(guildId);
     const total = suggestions.length;
@@ -403,28 +336,19 @@ function createStatsEmbed(guildId) {
     const rejected = suggestions.filter(s => s.status === 'rejeitado').length;
     const implemented = suggestions.filter(s => s.status === 'implementado').length;
     
-    const totalVotes = suggestions.reduce((sum, s) => sum + s.totalVotes, 0);
-    const avgVotes = total > 0 ? (totalVotes / total).toFixed(1) : 0;
-    
-    const embed = new EmbedBuilder()
-        .setTitle('📊 Estatísticas do Sistema de Sugestões')
+    return new EmbedBuilder()
+        .setTitle('📊 Estatísticas')
         .setColor(0x5865F2)
         .addFields(
-            { name: '📝 Total de Sugestões', value: `${total}`, inline: true },
+            { name: '📝 Total', value: `${total}`, inline: true },
             { name: '⏳ Pendentes', value: `${pending}`, inline: true },
             { name: '✅ Aprovadas', value: `${approved}`, inline: true },
             { name: '❌ Rejeitadas', value: `${rejected}`, inline: true },
-            { name: '🎉 Implementadas', value: `${implemented}`, inline: true },
-            { name: '📊 Taxa de Aprovação', value: `${total > 0 ? ((approved + implemented) / total * 100).toFixed(1) : 0}%`, inline: true },
-            { name: '👍 Total de Votos', value: `${totalVotes}`, inline: true },
-            { name: '⭐ Média de Votos', value: `${avgVotes}`, inline: true }
+            { name: '🎉 Implementadas', value: `${implemented}`, inline: true }
         )
         .setTimestamp();
-    
-    return embed;
 }
 
-// Função para criar modal de sugestão
 function createSuggestionModal() {
     const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
     
@@ -434,7 +358,7 @@ function createSuggestionModal() {
     
     const titleInput = new TextInputBuilder()
         .setCustomId('suggestion_title')
-        .setLabel('Título da Sugestão')
+        .setLabel('Título')
         .setStyle(TextInputStyle.Short)
         .setPlaceholder('Ex: Adicionar canal de música')
         .setRequired(true)
@@ -442,9 +366,9 @@ function createSuggestionModal() {
     
     const descriptionInput = new TextInputBuilder()
         .setCustomId('suggestion_description')
-        .setLabel('Descrição Detalhada')
+        .setLabel('Descrição')
         .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder('Explique sua sugestão em detalhes...\n\nPor que isso seria bom para o servidor?\nComo isso poderia ser implementado?\nExistem exemplos similares?')
+        .setPlaceholder('Explique sua sugestão em detalhes...')
         .setRequired(true)
         .setMaxLength(2000);
     
@@ -452,24 +376,24 @@ function createSuggestionModal() {
         .setCustomId('suggestion_category')
         .setLabel('Categoria')
         .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Ex: Moderação, Diversão, Utilidades')
+        .setPlaceholder('Ex: Moderação, Diversão')
         .setRequired(true)
         .setMaxLength(50);
     
-    const firstActionRow = new ActionRowBuilder().addComponents(titleInput);
-    const secondActionRow = new ActionRowBuilder().addComponents(descriptionInput);
-    const thirdActionRow = new ActionRowBuilder().addComponents(categoryInput);
-    
-    modal.addComponents(firstActionRow, secondActionRow, thirdActionRow);
+    modal.addComponents(
+        new ActionRowBuilder().addComponents(titleInput),
+        new ActionRowBuilder().addComponents(descriptionInput),
+        new ActionRowBuilder().addComponents(categoryInput)
+    );
     
     return modal;
 }
 
-// Registrar comandos (apenas os 2 comandos)
+// Comandos
 const commands = [
     {
         name: 'suggestions',
-        description: 'Configura o canal onde as sugestões serão enviadas',
+        description: 'Configura o canal de sugestões',
         options: [
             {
                 name: 'channel',
@@ -481,11 +405,11 @@ const commands = [
     },
     {
         name: 'suggestionschannel',
-        description: 'Envia o embed de sugestões no canal configurado',
+        description: 'Envia o embed de sugestões no canal',
         options: [
             {
                 name: 'channel',
-                description: 'O canal onde as sugestões aparecerão',
+                description: 'O canal para enviar o embed',
                 type: 7,
                 required: true
             }
@@ -493,119 +417,139 @@ const commands = [
     }
 ];
 
-// Registrar comandos globalmente
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
+// Eventos de conexão com tratamento de erro
 client.once('ready', async () => {
     console.log(`✅ Bot online como ${client.user.tag}`);
     console.log(`👑 Owner ID: ${OWNER_ID}`);
     
     try {
-        console.log('🔄 Registrando comandos slash...');
+        console.log('🔄 Registrando comandos...');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Comandos registrados com sucesso!');
-        console.log('📝 Comandos disponíveis: /suggestions e /suggestionschannel');
+        console.log('✅ Comandos registrados!');
+        console.log('📝 Comandos: /suggestions e /suggestionschannel');
     } catch (error) {
         console.error('❌ Erro ao registrar comandos:', error);
     }
     
-    // Configurar status do bot
     client.user.setPresence({
-        activities: [{ name: '/suggestions • Sistema de Sugestões', type: 3 }],
+        activities: [{ name: '/suggestions', type: 3 }],
         status: 'online'
     });
 });
 
+// Reconexão automática
+client.on('shardDisconnect', (event, id) => {
+    console.log(`⚠️ Shard ${id} desconectado. Tentando reconectar...`);
+});
+
+client.on('shardReconnecting', (id) => {
+    console.log(`🔄 Shard ${id} reconectando...`);
+});
+
+client.on('shardResume', (id, replayedEvents) => {
+    console.log(`✅ Shard ${id} reconectado! Eventos repetidos: ${replayedEvents}`);
+});
+
+// Tratamento de erros globais
+client.on('error', (error) => {
+    console.error('❌ Erro do cliente:', error);
+});
+
+client.on('warn', (warning) => {
+    console.warn('⚠️ Aviso:', warning);
+});
+
+process.on('unhandledRejection', (error) => {
+    console.error('❌ Erro não tratado (Promise):', error);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Exceção não capturada:', error);
+});
+
 // Handler de interações
 client.on('interactionCreate', async (interaction) => {
-    if (interaction.isCommand()) {
-        await handleCommand(interaction);
-    } else if (interaction.isButton()) {
-        await handleButton(interaction);
-    } else if (interaction.isModalSubmit()) {
-        await handleModal(interaction);
+    try {
+        if (interaction.isCommand()) {
+            await handleCommand(interaction);
+        } else if (interaction.isButton()) {
+            await handleButton(interaction);
+        } else if (interaction.isModalSubmit()) {
+            await handleModal(interaction);
+        }
+    } catch (error) {
+        console.error('❌ Erro ao processar interação:', error);
+        const errorMsg = { content: '❌ Ocorreu um erro ao processar sua ação.', ephemeral: true };
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply(errorMsg).catch(() => {});
+        }
     }
 });
 
 async function handleCommand(interaction) {
-    const { commandName, user, guildId, channel, options } = interaction;
+    const { commandName, user, guildId } = interaction;
     
     if (!guildId) {
-        return interaction.reply({ content: '❌ Este comando só pode ser usado em servidores!', ephemeral: true });
+        return interaction.reply({ content: '❌ Use em um servidor!', ephemeral: true });
     }
     
-    // Verificar se é owner para ambos os comandos
     if (!isOwner(user.id)) {
         return interaction.reply({
-            content: '❌ Você não tem permissão para usar este comando. Apenas o owner do bot pode executá-lo.',
+            content: '❌ Apenas o owner pode usar este comando.',
             ephemeral: true
         });
     }
     
-    switch (commandName) {
-        case 'suggestions':
-            await handleSuggestionsCommand(interaction);
-            break;
-        case 'suggestionschannel':
-            await handleSuggestionsChannelCommand(interaction);
-            break;
-    }
-}
-
-async function handleSuggestionsCommand(interaction) {
-    const channel = interaction.options.getChannel('channel');
-    
-    if (channel.type !== ChannelType.GuildText) {
-        return interaction.reply({ content: '❌ Por favor, selecione um canal de texto!', ephemeral: true });
-    }
-    
-    db.setSuggestionsChannel(interaction.guildId, channel.id);
-    
-    const embed = new EmbedBuilder()
-        .setTitle('✅ Canal de Sugestões Configurado')
-        .setDescription(`O canal de sugestões foi configurado como ${channel}`)
-        .setColor(0x00FF00)
-        .addFields(
-            { name: 'Próximo Passo', value: `Use /suggestionschannel ${channel} para enviar o embed de sugestões neste canal.`, inline: false }
-        )
-        .setTimestamp();
-    
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-}
-
-async function handleSuggestionsChannelCommand(interaction) {
-    const channel = interaction.options.getChannel('channel');
-    const suggestionsChannelId = db.getSuggestionsChannel(interaction.guildId);
-    
-    if (!suggestionsChannelId) {
-        return interaction.reply({
-            content: '❌ Primeiro configure o canal de sugestões usando /suggestions',
-            ephemeral: true
-        });
+    if (commandName === 'suggestions') {
+        const channel = interaction.options.getChannel('channel');
+        
+        if (channel.type !== ChannelType.GuildText) {
+            return interaction.reply({ content: '❌ Selecione um canal de texto!', ephemeral: true });
+        }
+        
+        db.setSuggestionsChannel(interaction.guildId, channel.id);
+        
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Canal Configurado')
+            .setDescription(`Canal: ${channel}`)
+            .setColor(0x00FF00)
+            .addFields({ name: 'Próximo passo', value: `Use /suggestionschannel ${channel}` })
+            .setTimestamp();
+        
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
     
-    const embed = createSuggestionsChannelEmbed();
-    const row = new ActionRowBuilder()
-        .addComponents(
-            new ButtonBuilder()
-                .setCustomId('send_suggestion')
-                .setLabel('📝 Enviar Sugestão')
-                .setStyle(ButtonStyle.Primary)
-                .setEmoji('💡'),
-            new ButtonBuilder()
-                .setCustomId('view_stats')
-                .setLabel('📊 Estatísticas')
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji('📈'),
-            new ButtonBuilder()
-                .setCustomId('view_rules')
-                .setLabel('📜 Regras')
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji('📋')
-        );
-    
-    await channel.send({ embeds: [embed], components: [row] });
-    await interaction.reply({ content: `✅ Embed de sugestões enviado em ${channel}`, ephemeral: true });
+    if (commandName === 'suggestionschannel') {
+        const channel = interaction.options.getChannel('channel');
+        const suggestionsChannelId = db.getSuggestionsChannel(interaction.guildId);
+        
+        if (!suggestionsChannelId) {
+            return interaction.reply({
+                content: '❌ Use /suggestions primeiro!',
+                ephemeral: true
+            });
+        }
+        
+        const embed = createSuggestionsChannelEmbed();
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('send_suggestion')
+                    .setLabel('📝 Enviar Sugestão')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('💡'),
+                new ButtonBuilder()
+                    .setCustomId('view_stats')
+                    .setLabel('📊 Estatísticas')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('📈')
+            );
+        
+        await channel.send({ embeds: [embed], components: [row] });
+        await interaction.reply({ content: `✅ Embed enviado em ${channel}`, ephemeral: true });
+    }
 }
 
 async function handleButton(interaction) {
@@ -613,47 +557,26 @@ async function handleButton(interaction) {
     
     if (db.isUserBanned(user.id, guildId)) {
         return interaction.reply({
-            content: '❌ Você está banido de usar o sistema de sugestões neste servidor.',
+            content: '❌ Você está banido do sistema!',
             ephemeral: true
         });
     }
     
-    switch (customId) {
-        case 'send_suggestion':
-            if (db.isOnCooldown(user.id)) {
-                const remaining = db.getCooldownRemaining(user.id);
-                return interaction.reply({
-                    content: `❌ Aguarde ${Math.ceil(remaining)} segundos antes de enviar outra sugestão.`,
-                    ephemeral: true
-                });
-            }
-            
-            const modal = createSuggestionModal();
-            await interaction.showModal(modal);
-            break;
-            
-        case 'view_stats':
-            const embed = createStatsEmbed(guildId);
-            await interaction.reply({ embeds: [embed], ephemeral: true });
-            break;
-            
-        case 'view_rules':
-            const rulesEmbed = new EmbedBuilder()
-                .setTitle('📜 Regras do Sistema de Sugestões')
-                .setDescription('Siga estas regras para manter o sistema organizado e útil para todos.')
-                .setColor(0xFFA500)
-                .addFields(
-                    { name: '1️⃣ Sugestões Duplicadas', value: 'Verifique se sua sugestão já foi enviada antes de criar uma nova.', inline: false },
-                    { name: '2️⃣ Conteúdo Apropriado', value: 'Sugestões ofensivas, inadequadas ou spam serão removidas e resultarão em banimento.', inline: false },
-                    { name: '3️⃣ Seja Específico', value: 'Explique sua ideia de forma clara e detalhada para facilitar a avaliação.', inline: false },
-                    { name: '4️⃣ Uma Sugestão por Vez', value: 'Cada sugestão deve conter apenas uma ideia principal.', inline: false },
-                    { name: '5️⃣ Respeito', value: 'Respeite as opiniões diferentes nos comentários e votações.', inline: false },
-                    { name: '6️⃣ Consequências', value: 'O não cumprimento das regras pode resultar em banimento do sistema de sugestões.', inline: false }
-                )
-                .setTimestamp();
-            
-            await interaction.reply({ embeds: [rulesEmbed], ephemeral: true });
-            break;
+    if (customId === 'send_suggestion') {
+        if (db.isOnCooldown(user.id)) {
+            const remaining = Math.ceil(db.getCooldownRemaining(user.id));
+            return interaction.reply({
+                content: `❌ Aguarde ${remaining} segundos!`,
+                ephemeral: true
+            });
+        }
+        
+        await interaction.showModal(createSuggestionModal());
+    }
+    
+    if (customId === 'view_stats') {
+        const embed = createStatsEmbed(guildId);
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 }
 
@@ -662,13 +585,12 @@ async function handleModal(interaction) {
         const title = interaction.fields.getTextInputValue('suggestion_title');
         const description = interaction.fields.getTextInputValue('suggestion_description');
         const category = interaction.fields.getTextInputValue('suggestion_category');
-        
         const content = `**${title}**\n\n${description}`;
         
         const suggestionsChannelId = db.getSuggestionsChannel(interaction.guildId);
         if (!suggestionsChannelId) {
             return interaction.reply({
-                content: '❌ O canal de sugestões não está configurado. Contate o administrador.',
+                content: '❌ Sistema não configurado!',
                 ephemeral: true
             });
         }
@@ -676,15 +598,14 @@ async function handleModal(interaction) {
         const channel = interaction.guild.channels.cache.get(suggestionsChannelId);
         if (!channel) {
             return interaction.reply({
-                content: '❌ Canal de sugestões não encontrado. Contate o administrador.',
+                content: '❌ Canal não encontrado!',
                 ephemeral: true
             });
         }
         
-        // Verificar cooldown novamente
         if (db.isOnCooldown(interaction.user.id)) {
             return interaction.reply({
-                content: '❌ Aguarde antes de enviar outra sugestão.',
+                content: '❌ Aguarde antes de enviar outra sugestão!',
                 ephemeral: true
             });
         }
@@ -697,37 +618,29 @@ async function handleModal(interaction) {
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId(`vote_up_${suggestion.id}`)
-                    .setLabel(`${suggestion.votesUp}`)
+                    .setLabel('0')
                     .setStyle(ButtonStyle.Success)
                     .setEmoji('👍'),
                 new ButtonBuilder()
                     .setCustomId(`vote_down_${suggestion.id}`)
-                    .setLabel(`${suggestion.votesDown}`)
+                    .setLabel('0')
                     .setStyle(ButtonStyle.Danger)
-                    .setEmoji('👎'),
-                new ButtonBuilder()
-                    .setCustomId(`comment_${suggestion.id}`)
-                    .setLabel('Comentar')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('💬')
+                    .setEmoji('👎')
             );
         
         const message = await channel.send({ embeds: [embed], components: [row] });
-        
-        // Armazenar ID da mensagem para futuras atualizações
         db.suggestionMessageIds.set(suggestion.id, message.id);
         
         await interaction.reply({
-            content: `✅ Sua sugestão foi enviada com sucesso no canal ${channel}! ID: ${suggestion.id.split('_')[1]}`,
+            content: `✅ Sugestão enviada em ${channel}! ID: ${suggestion.id.split('_')[1]}`,
             ephemeral: true
         });
         
-        // Registrar log de moderação
-        db.addModerationLog(interaction.guildId, 'suggestion_created', interaction.user.id, suggestion.id, content.substring(0, 100));
+        db.addModerationLog(interaction.guildId, 'suggestion_created', interaction.user.id, suggestion.id, title);
     }
 }
 
-// Handler para novos botões de voto e comentário (dinâmicos)
+// Botões de voto
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
     
@@ -743,12 +656,11 @@ client.on('interactionCreate', async (interaction) => {
         }
         
         if (suggestion.userId === user.id) {
-            return interaction.reply({ content: '❌ Você não pode votar na sua própria sugestão!', ephemeral: true });
+            return interaction.reply({ content: '❌ Não vote na sua própria sugestão!', ephemeral: true });
         }
         
-        const result = db.voteOnSuggestion(suggestionId, user.id, voteType);
+        db.voteOnSuggestion(suggestionId, user.id, voteType);
         
-        // Atualizar o embed
         const updatedEmbed = createSuggestionEmbed(suggestion, user);
         const updatedRow = new ActionRowBuilder()
             .addComponents(
@@ -761,186 +673,44 @@ client.on('interactionCreate', async (interaction) => {
                     .setCustomId(`vote_down_${suggestionId}`)
                     .setLabel(`${suggestion.votesDown}`)
                     .setStyle(ButtonStyle.Danger)
-                    .setEmoji('👎'),
-                new ButtonBuilder()
-                    .setCustomId(`comment_${suggestionId}`)
-                    .setLabel('Comentar')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('💬')
+                    .setEmoji('👎')
             );
         
         await interaction.update({ embeds: [updatedEmbed], components: [updatedRow] });
-        
-        // Registrar voto
-        db.addModerationLog(guildId, 'vote', user.id, suggestionId, voteType);
-        
-    } else if (customId.startsWith('comment_')) {
-        const suggestionId = customId.split('_')[1];
-        const suggestion = db.getSuggestion(suggestionId);
-        
-        if (!suggestion) {
-            return interaction.reply({ content: '❌ Sugestão não encontrada!', ephemeral: true });
-        }
-        
-        // Criar modal para comentário
-        const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
-        
-        const modal = new ModalBuilder()
-            .setCustomId(`comment_modal_${suggestionId}`)
-            .setTitle('Adicionar Comentário');
-        
-        const commentInput = new TextInputBuilder()
-            .setCustomId('comment_text')
-            .setLabel('Seu Comentário')
-            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Digite seu comentário aqui...')
-            .setRequired(true)
-            .setMaxLength(1000);
-        
-        const actionRow = new ActionRowBuilder().addComponents(commentInput);
-        modal.addComponents(actionRow);
-        
-        await interaction.showModal(modal);
     }
 });
 
-// Handler para modais de comentário
-client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isModalSubmit()) return;
-    
-    if (interaction.customId.startsWith('comment_modal_')) {
-        const suggestionId = interaction.customId.replace('comment_modal_', '');
-        const comment = interaction.fields.getTextInputValue('comment_text');
-        
-        const suggestion = db.getSuggestion(suggestionId);
-        if (!suggestion) {
-            return interaction.reply({ content: '❌ Sugestão não encontrada!', ephemeral: true });
-        }
-        
-        db.addComment(suggestionId, interaction.user.id, comment);
-        
-        const embed = new EmbedBuilder()
-            .setTitle('✅ Comentário Adicionado')
-            .setDescription(`Seu comentário foi adicionado à sugestão #${suggestionId.split('_')[1]}`)
-            .setColor(0x5865F2)
-            .setTimestamp();
-        
-        await interaction.reply({ embeds: [embed], ephemeral: true });
-        
-        // Notificar autor
-        if (suggestion.userId !== interaction.user.id) {
-            const author = await client.users.fetch(suggestion.userId);
-            if (author) {
-                author.send(`💬 Novo comentário na sua sugestão #${suggestionId.split('_')[1]} de ${interaction.user.username}:\n\n${comment}`).catch(() => {});
-            }
-        }
-    }
-});
-
-// Comandos administrativos via mensagem (apenas owner)
+// Comandos administrativos via mensagem
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (!isOwner(message.author.id)) return;
     
     if (message.content.startsWith('!suggestion_ban')) {
         const args = message.content.split(' ');
-        if (args.length < 2) {
-            return message.reply('Uso: !suggestion_ban <@usuário> [motivo]');
-        }
-        
         const user = message.mentions.users.first();
         if (!user) {
-            return message.reply('❌ Mencione um usuário válido!');
+            return message.reply('Uso: !suggestion_ban @user [motivo]');
         }
         
-        const reason = args.slice(2).join(' ') || 'Sem motivo especificado';
+        const reason = args.slice(2).join(' ') || 'Sem motivo';
         db.banUser(user.id, reason, message.guild.id, message.author.id);
-        
-        message.reply(`✅ ${user.tag} foi banido do sistema de sugestões. Motivo: ${reason}`);
-        
-        // Notificar o usuário
-        user.send(`❌ Você foi banido do sistema de sugestões no servidor ${message.guild.name}. Motivo: ${reason}`).catch(() => {});
+        message.reply(`✅ ${user.tag} banido. Motivo: ${reason}`);
     }
     
     if (message.content.startsWith('!suggestion_unban')) {
-        const args = message.content.split(' ');
-        if (args.length < 2) {
-            return message.reply('Uso: !suggestion_unban <@usuário>');
-        }
-        
         const user = message.mentions.users.first();
         if (!user) {
-            return message.reply('❌ Mencione um usuário válido!');
+            return message.reply('Uso: !suggestion_unban @user');
         }
         
         db.unbanUser(user.id);
-        message.reply(`✅ ${user.tag} foi desbanido do sistema de sugestões.`);
-        
-        user.send(`✅ Você foi desbanido do sistema de sugestões no servidor ${message.guild.name}.`).catch(() => {});
-    }
-    
-    if (message.content.startsWith('!suggestion_logs')) {
-        const logs = db.getModerationLogs(message.guild.id, 20);
-        if (logs.length === 0) {
-            return message.reply('Nenhum log encontrado.');
-        }
-        
-        let logText = '📋 **Últimos Logs do Sistema de Sugestões**\n\n';
-        for (const log of logs) {
-            logText += `**${log.action.toUpperCase()}** - <@${log.moderatorId}> -> ${log.targetId}\n`;
-            logText += `Motivo: ${log.reason || 'N/A'}\n`;
-            logText += `Data: ${log.timestamp.toLocaleString()}\n\n`;
-        }
-        
-        // Enviar em partes se necessário
-        if (logText.length > 2000) {
-            const chunks = [];
-            for (let i = 0; i < logText.length; i += 1990) {
-                chunks.push(logText.substring(i, i + 1990));
-            }
-            for (const chunk of chunks) {
-                await message.reply(chunk);
-            }
-        } else {
-            await message.reply(logText);
-        }
-    }
-    
-    if (message.content.startsWith('!suggestion_export')) {
-        const suggestions = db.getAllSuggestions(message.guild.id);
-        const exportData = {
-            guildId: message.guild.id,
-            guildName: message.guild.name,
-            exportDate: new Date(),
-            totalSuggestions: suggestions.length,
-            suggestions: suggestions.map(s => ({
-                id: s.id,
-                userId: s.userId,
-                content: s.content,
-                category: s.category,
-                createdAt: s.createdAt,
-                status: s.status,
-                votesUp: s.votesUp,
-                votesDown: s.votesDown,
-                comments: db.getComments(s.id)
-            }))
-        };
-        
-        const fileName = `suggestions_export_${message.guild.id}_${Date.now()}.json`;
-        fs.writeFileSync(fileName, JSON.stringify(exportData, null, 2));
-        
-        await message.reply({
-            content: '📊 Exportação concluída!',
-            files: [fileName]
-        });
-        
-        fs.unlinkSync(fileName);
+        message.reply(`✅ ${user.tag} desbanido.`);
     }
     
     if (message.content.startsWith('!suggestion_status')) {
         const args = message.content.split(' ');
         if (args.length < 3) {
-            return message.reply('Uso: !suggestion_status <id_da_sugestão> <status> [motivo]\nStatus disponíveis: pendente, aprovado, rejeitado, implementado, em-analise');
+            return message.reply('Uso: !suggestion_status <id> <status> [motivo]');
         }
         
         const suggestionId = args[1];
@@ -952,81 +722,71 @@ client.on('messageCreate', async (message) => {
             return message.reply('❌ Sugestão não encontrada!');
         }
         
-        const validStatus = ['pendente', 'aprovado', 'rejeitado', 'implementado', 'em-analise'];
-        if (!validStatus.includes(newStatus)) {
-            return message.reply('❌ Status inválido! Use: pendente, aprovado, rejeitado, implementado, em-analise');
-        }
-        
-        if (newStatus === 'rejeitado' && !reason) {
-            return message.reply('❌ Para rejeitar uma sugestão, forneça um motivo!');
-        }
-        
         db.updateSuggestionStatus(suggestionId, newStatus, message.author.id, reason);
-        message.reply(`✅ Sugestão #${suggestionId.split('_')[1]} atualizada para **${newStatus}**`);
+        message.reply(`✅ Sugestão #${suggestionId.split('_')[1]} atualizada para ${newStatus}`);
         
-        // Atualizar a mensagem no canal
-        const suggestionsChannelId = db.getSuggestionsChannel(message.guild.id);
-        if (suggestionsChannelId) {
-            const channel = message.guild.channels.cache.get(suggestionsChannelId);
-            if (channel) {
-                const messageId = db.suggestionMessageIds.get(suggestionId);
-                if (messageId) {
-                    try {
-                        const msg = await channel.messages.fetch(messageId);
-                        const updatedEmbed = createSuggestionEmbed(suggestion, client.user);
-                        const row = new ActionRowBuilder()
-                            .addComponents(
-                                new ButtonBuilder()
-                                    .setCustomId(`vote_up_${suggestionId}`)
-                                    .setLabel(`${suggestion.votesUp}`)
-                                    .setStyle(ButtonStyle.Success)
-                                    .setEmoji('👍'),
-                                new ButtonBuilder()
-                                    .setCustomId(`vote_down_${suggestionId}`)
-                                    .setLabel(`${suggestion.votesDown}`)
-                                    .setStyle(ButtonStyle.Danger)
-                                    .setEmoji('👎'),
-                                new ButtonBuilder()
-                                    .setCustomId(`comment_${suggestionId}`)
-                                    .setLabel('Comentar')
-                                    .setStyle(ButtonStyle.Secondary)
-                                    .setEmoji('💬')
-                            );
-                        await msg.edit({ embeds: [updatedEmbed], components: [row] });
-                    } catch (error) {
-                        console.error('Erro ao atualizar mensagem:', error);
-                    }
-                }
+        // Atualizar mensagem
+        const channelId = db.getSuggestionsChannel(message.guild.id);
+        if (channelId) {
+            const channel = message.guild.channels.cache.get(channelId);
+            const msgId = db.suggestionMessageIds.get(suggestionId);
+            if (channel && msgId) {
+                try {
+                    const msg = await channel.messages.fetch(msgId);
+                    const updatedEmbed = createSuggestionEmbed(suggestion, client.user);
+                    const row = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`vote_up_${suggestionId}`)
+                                .setLabel(`${suggestion.votesUp}`)
+                                .setStyle(ButtonStyle.Success)
+                                .setEmoji('👍'),
+                            new ButtonBuilder()
+                                .setCustomId(`vote_down_${suggestionId}`)
+                                .setLabel(`${suggestion.votesDown}`)
+                                .setStyle(ButtonStyle.Danger)
+                                .setEmoji('👎')
+                        );
+                    await msg.edit({ embeds: [updatedEmbed], components: [row] });
+                } catch (err) {}
             }
         }
-        
-        // Notificar autor
-        const author = await client.users.fetch(suggestion.userId);
-        if (author) {
-            author.send(`📝 Sua sugestão #${suggestionId.split('_')[1]} foi atualizada para **${newStatus}**${reason ? `\nMotivo: ${reason}` : ''}`).catch(() => {});
-        }
+    }
+    
+    if (message.content === '!suggestion_ping') {
+        message.reply('🏓 Pong! Bot está online!');
     }
 });
 
-// Handler para erros
-process.on('unhandledRejection', (error) => {
-    console.error('❌ Erro não tratado:', error);
-});
+// Função de reconexão automática
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 10;
 
-process.on('uncaughtException', (error) => {
-    console.error('❌ Exceção não capturada:', error);
-});
+function connectBot() {
+    client.login(TOKEN).catch((error) => {
+        console.error(`❌ Falha na conexão (tentativa ${reconnectAttempts + 1}/${maxReconnectAttempts}):`, error.message);
+        
+        if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            const delay = Math.min(5000 * reconnectAttempts, 60000);
+            console.log(`🔄 Tentando reconectar em ${delay/1000} segundos...`);
+            setTimeout(connectBot, delay);
+        } else {
+            console.error('❌ Número máximo de tentativas atingido. Encerrando...');
+            process.exit(1);
+        }
+    });
+}
 
-// Iniciar o bot
-client.login(TOKEN);
+connectBot();
 
 console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
 ║     🚀 Bot de Sugestões Iniciando...                    ║
 ║                                                          ║
-║     📝 Sistema completo de sugestões                    ║
-║     👑 Apenas o owner pode executar comandos admin     ║
+║     📝 Sistema de sugestões                             ║
+║     👑 Apenas o owner pode executar comandos           ║
 ║     💡 Comandos: /suggestions e /suggestionschannel    ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
