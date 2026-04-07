@@ -420,7 +420,7 @@ const commands = [
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 // Eventos de conexão com tratamento de erro
-client.once('ready', async () => {
+client.once('clientReady', async () => {
     console.log(`✅ Bot online como ${client.user.tag}`);
     console.log(`👑 Owner ID: ${OWNER_ID}`);
     
@@ -434,7 +434,7 @@ client.once('ready', async () => {
     }
     
     client.user.setPresence({
-        activities: [{ name: '/suggestions', type: 3 }],
+        activities: [{ name: '𝙼𝚊𝚍𝚎 𝚋𝚢 𝚈𝟸𝚔_𝙽𝚊𝚝', type: 3 }],
         status: 'online'
     });
 });
