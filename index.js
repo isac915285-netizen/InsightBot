@@ -678,17 +678,7 @@ client.on(Events.MessageCreate, async (message) => {
                 [
                     {
                         name: '👤 Autor',
-                        value: `${message.author.tag} (${message.author.id})`,
-                        inline: true
-                    },
-                    {
-                        name: '📅 Data',
-                        value: formatDate(suggestion.timestamp),
-                        inline: true
-                    },
-                    {
-                        name: '🆔 ID da Sugestão',
-                        value: suggestion.id,
+                        value: `${message.author.tag}`,
                         inline: true
                     }
                 ]
