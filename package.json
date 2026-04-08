@@ -1,13 +1,20 @@
 {
   "name": "discord-suggestions-bot",
-  "version": "1.0.0",
-  "description": "Bot de sugestões simples para Discord",
+  "version": "2.0.0",
+  "description": "Bot de sugestões completo para Discord",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
     "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.9.0"
   }
 }
