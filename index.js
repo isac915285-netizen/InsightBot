@@ -1429,17 +1429,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 [
                     {
                         name: '👤 Autor',
-                        value: `${interaction.user.tag} (${interaction.user.id})`,
-                        inline: true
-                    },
-                    {
-                        name: '📅 Data',
-                        value: formatDate(suggestion.timestamp),
-                        inline: true
-                    },
-                    {
-                        name: '🆔 ID da Sugestão',
-                        value: suggestion.id,
+                        value: `${interaction.user.tag}`,
                         inline: true
                     }
                 ]
