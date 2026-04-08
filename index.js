@@ -1541,11 +1541,8 @@ client.once(Events.ClientReady, async () => {
     // Atualizar status periodicamente
     setInterval(() => {
         const statuses = [
-            { name: '💡 !help', type: ActivityType.Watching },
-            { name: `${client.guilds.cache.size} servidores`, type: ActivityType.Watching },
-            { name: '!suggest', type: ActivityType.Listening },
-            { name: '🚀 InsightBot v1.0', type: ActivityType.Playing },
-            { name: '📊 !stats', type: ActivityType.Watching }
+            { name: '!help', type: ActivityType.Watching },
+            { name: '𝙼𝚊𝚍𝚎 𝙱𝚢 𝚈𝟸𝚔_𝙽𝚊𝚝', type: ActivityType.Playing }
         ];
         
         const randomStatus = statuses[Math.floor(Math.random() * statuses.length)];
@@ -1554,7 +1551,7 @@ client.once(Events.ClientReady, async () => {
             activities: [{ name: randomStatus.name, type: randomStatus.type }],
             status: PresenceUpdateStatus.Online
         });
-    }, 30000); // Atualizar a cada 30 segundos
+    }, 10000); // Atualizar a cada 30 segundos
 });
 
 // Evento quando o bot entra em um novo servidor
