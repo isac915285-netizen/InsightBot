@@ -1,7 +1,7 @@
-// index.js - Bot de Sugestões para Discord
-// Versão: 2.0.0
-// Desenvolvido com Discord.js v14
+// InsightBot - Bot de Sugestões para Discord
+// Desenvolvido com discord.js v14
 
+require('dotenv').config();
 const { 
     Client, 
     GatewayIntentBits, 
@@ -16,52 +16,43 @@ const {
     TextInputStyle, 
     ChannelType,
     PermissionsBitField,
-    SlashCommandBuilder,
-    REST,
-    Routes,
-    Events
+    Events,
+    ActivityType,
+    PresenceUpdateStatus
 } = require('discord.js');
-
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config();
 
 // ============================================
-// CONFIGURAÇÕES INICIAIS E VARIÁVEIS DE AMBIENTE
+// CONFIGURAÇÕES INICIAIS
 // ============================================
 
+// Carregar variáveis de ambiente
 const TOKEN = process.env.TOKEN;
 const OWNER_ID = process.env.OWNER_ID;
-const PREFIX = '!';
-const CLIENT_ID = process.env.CLIENT_ID;
 
-// Validação das variáveis de ambiente
-if (!TOKEN || !OWNER_ID) {
-    console.error('\x1b[31m%s\x1b[0m', '❌ ERRO CRÍTICO: Variáveis de ambiente TOKEN e OWNER_ID são obrigatórias!');
-    console.error('\x1b[33m%s\x1b[0m', '📝 Crie um arquivo .env com as seguintes variáveis:');
-    console.error('\x1b[36m%s\x1b[0m', '   TOKEN=seu_token_aqui');
-    console.error('\x1b[36m%s\x1b[0m', '   OWNER_ID=seu_id_do_discord');
-    console.error('\x1b[36m%s\x1b[0m', '   CLIENT_ID=id_do_seu_bot (opcional para deploy global)');
+// Verificar se as variáveis essenciais estão definidas
+if (!TOKEN) {
+    console.error('❌ ERRO: TOKEN não definido no arquivo .env');
     process.exit(1);
 }
 
-// ============================================
-// INICIALIZAÇÃO DO CLIENTE DISCORD
-// ============================================
+if (!OWNER_ID) {
+    console.error('❌ ERRO: OWNER_ID não definido no arquivo .env');
+    process.exit(1);
+}
 
+// Inicializar cliente Discord
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildPresences,
         GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.GuildEmojisAndStickers,
-        GatewayIntentBits.GuildInvites,
-        GatewayIntentBits.GuildWebhooks,
-        GatewayIntentBits.GuildIntegrations,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.DirectMessageReactions,
         GatewayIntentBits.DirectMessageTyping
@@ -69,1393 +60,1657 @@ const client = new Client({
     partials: [
         Partials.Channel,
         Partials.Message,
+        Partials.Reaction,
         Partials.User,
         Partials.GuildMember,
-        Partials.Reaction,
         Partials.ThreadMember,
         Partials.GuildScheduledEvent
-    ],
-    allowedMentions: {
-        parse: ['users', 'roles'],
-        repliedUser: true
-    },
-    presence: {
-        status: 'online',
-        activities: [{
-            name: '📊 Sistema de Sugestões',
-            type: 3 // WATCHING
-        }]
-    }
+    ]
 });
 
 // ============================================
-// COLLECTIONS E ARMAZENAMENTO
+// COLLECTIONS PARA ARMAZENAMENTO
 // ============================================
 
 client.commands = new Collection();
-client.prefixCommands = new Collection();
 client.slashCommands = new Collection();
+client.prefixCommands = new Collection();
+client.suggestionsConfig = new Collection();
 client.cooldowns = new Collection();
-client.suggestionsConfig = new Map(); // Armazena configurações por servidor
-client.suggestionsCount = new Map(); // Contador de sugestões por servidor
-client.userSuggestions = new Map(); // Sugestões por usuário para rate limiting
-client.activeModals = new Map(); // Modais ativos
-client.activeButtons = new Map(); // Botões ativos
-
-// Configurações padrão
-const DEFAULT_CONFIG = {
-    suggestionsChannel: null,
-    outputChannel: null,
-    cooldown: 30000, // 30 segundos
-    maxSuggestionsPerDay: 10,
-    requireApproval: false,
-    allowAnonymous: true,
-    minLength: 10,
-    maxLength: 1000,
-    embedColor: '#5865F2',
-    footerText: 'Sistema de Sugestões',
-    reactions: {
-        upvote: '👍',
-        downvote: '👎'
-    },
-    notifications: {
-        onSuggestion: true,
-        onApproval: true,
-        onRejection: true
-    }
-};
+client.suggestionCount = new Collection();
+client.userSuggestions = new Collection();
+client.suggestionVotes = new Collection();
 
 // ============================================
-// FUNÇÕES UTILITÁRIAS
+// DADOS DE CONFIGURAÇÃO PERSISTENTES
 // ============================================
 
-class Logger {
-    static info(message) {
-        console.log('\x1b[36m%s\x1b[0m', `[${new Date().toLocaleTimeString()}] ℹ️ ${message}`);
+const CONFIG_FILE = path.join(__dirname, 'suggestions_config.json');
+let suggestionsConfig = {};
+
+// Carregar configurações salvas
+try {
+    if (fs.existsSync(CONFIG_FILE)) {
+        const data = fs.readFileSync(CONFIG_FILE, 'utf8');
+        suggestionsConfig = JSON.parse(data);
+        console.log('📁 Configurações de sugestões carregadas do arquivo');
+    } else {
+        console.log('📁 Nenhum arquivo de configuração encontrado, criando novo');
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify({}, null, 4));
     }
-    
-    static success(message) {
-        console.log('\x1b[32m%s\x1b[0m', `[${new Date().toLocaleTimeString()}] ✅ ${message}`);
-    }
-    
-    static warn(message) {
-        console.log('\x1b[33m%s\x1b[0m', `[${new Date().toLocaleTimeString()}] ⚠️ ${message}`);
-    }
-    
-    static error(message) {
-        console.log('\x1b[31m%s\x1b[0m', `[${new Date().toLocaleTimeString()}] ❌ ${message}`);
-    }
-    
-    static debug(message) {
-        if (process.env.DEBUG === 'true') {
-            console.log('\x1b[35m%s\x1b[0m', `[${new Date().toLocaleTimeString()}] 🔍 ${message}`);
-        }
-    }
-    
-    static command(user, command, args = '') {
-        console.log('\x1b[90m%s\x1b[0m', `[${new Date().toLocaleTimeString()}] 👤 ${user} executou: ${command} ${args}`);
+} catch (error) {
+    console.error('❌ Erro ao carregar configurações:', error);
+    suggestionsConfig = {};
+}
+
+// Função para salvar configurações
+function saveConfig() {
+    try {
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify(suggestionsConfig, null, 4));
+        console.log('💾 Configurações de sugestões salvas');
+    } catch (error) {
+        console.error('❌ Erro ao salvar configurações:', error);
     }
 }
 
-class Utils {
-    static formatDuration(ms) {
-        const seconds = Math.floor((ms / 1000) % 60);
-        const minutes = Math.floor((ms / (1000 * 60)) % 60);
-        const hours = Math.floor((ms / (1000 * 60 * 60)) % 24);
-        const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-        
-        const parts = [];
-        if (days > 0) parts.push(`${days}d`);
-        if (hours > 0) parts.push(`${hours}h`);
-        if (minutes > 0) parts.push(`${minutes}m`);
-        if (seconds > 0) parts.push(`${seconds}s`);
-        
-        return parts.join(' ') || '0s';
+// ============================================
+// UTILITÁRIOS
+// ============================================
+
+// Função para verificar permissões do owner
+function isOwner(userId) {
+    return userId === OWNER_ID;
+}
+
+// Função para criar embed padrão
+function createEmbed(title, description, color = '#5865F2', fields = []) {
+    const embed = new EmbedBuilder()
+        .setTitle(title)
+        .setDescription(description)
+        .setColor(color)
+        .setTimestamp()
+        .setFooter({ 
+            text: 'InsightBot - Sistema de Sugestões', 
+            iconURL: 'https://cdn.discordapp.com/emojis/1107484326957170758.webp' 
+        });
+    
+    if (fields.length > 0) {
+        embed.addFields(fields);
     }
     
-    static validateChannel(guild, channelId, type = null) {
-        try {
-            const channel = guild.channels.cache.get(channelId);
-            if (!channel) return false;
-            if (type && channel.type !== type) return false;
-            return true;
-        } catch {
+    return embed;
+}
+
+// Função para criar embed de erro
+function createErrorEmbed(description) {
+    return createEmbed('❌ Erro', description, '#FF0000');
+}
+
+// Função para criar embed de sucesso
+function createSuccessEmbed(description) {
+    return createEmbed('✅ Sucesso', description, '#00FF00');
+}
+
+// Função para formatar data
+function formatDate(date) {
+    return new Date(date).toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+// Função para enviar mensagem de inicialização
+async function sendStartupMessage() {
+    try {
+        // Aguardar o cliente estar pronto
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        const guilds = client.guilds.cache;
+        
+        for (const [guildId, guild] of guilds) {
+            try {
+                // Procurar canal chamado "geral"
+                let channel = guild.channels.cache.find(
+                    ch => ch.name.toLowerCase() === 'geral' && 
+                    ch.type === ChannelType.GuildText
+                );
+                
+                // Se não encontrar "geral", procurar "loginfo"
+                if (!channel) {
+                    channel = guild.channels.cache.find(
+                        ch => ch.name.toLowerCase() === 'loginfo' && 
+                        ch.type === ChannelType.GuildText
+                    );
+                }
+                
+                // Se encontrou o canal, enviar mensagem
+                if (channel) {
+                    const messages = [
+                        `🌟 **InsightBot está online!** Use \`!help\` para ver todos os comandos disponíveis.`,
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+                        `🤖 **Bot Iniciado com Sucesso** 🤖`,
+                        `✨ **InsightBot** acaba de ser ativado e está pronto para gerenciar sugestões!`,
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+                        `📢 **Sistema Online:**`,
+                        `✅ Comandos Slash disponíveis (apenas configuração)`,
+                        `✅ Sistema de Prefixo (!) ativo`,
+                        `✅ Gerenciador de Sugestões pronto`,
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+                        `🎯 **InsightBot - Transformando ideias em realidade!** 🚀`,
+                        `\`\`\`css\n[InsightBot] :: Sistema iniciado com sucesso\n[Status] :: Online e operacional\n[Versão] :: 1.0.0\n\`\`\``,
+                        `╔══════════════════════════════════════════════╗`,
+                        `║           🌟 INSIGHTBOT ONLINE 🌟            ║`,
+                        `╚══════════════════════════════════════════════╝`,
+                        `**🎉 Bem-vindo ao InsightBot!**\n*Seu assistente de sugestões inteligentes está ativo.*`,
+                        `> 📌 **Dica:** Use \`!help\` para ver todos os comandos disponíveis`,
+                        `> 💡 **Dica:** Use \`!setup\` para ver como configurar o sistema`,
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+                        `🟢 **Status:** Operacional | 🕐 **Horário:** ${new Date().toLocaleTimeString('pt-BR')}`
+                    ];
+                    
+                    // Enviar todas as mensagens formatadas
+                    for (const msg of messages) {
+                        await channel.send(msg);
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                    
+                    console.log(`✅ Mensagem de inicialização enviada em "${channel.name}" no servidor ${guild.name}`);
+                }
+            } catch (error) {
+                console.error(`❌ Erro ao enviar mensagem no servidor ${guild.name}:`, error);
+            }
+        }
+    } catch (error) {
+        console.error('❌ Erro ao enviar mensagens de inicialização:', error);
+    }
+}
+
+// ============================================
+// SISTEMA DE SUGESTÕES
+// ============================================
+
+class SuggestionManager {
+    constructor() {
+        this.suggestions = new Map();
+        this.votes = new Map();
+        this.userSuggestions = new Map();
+    }
+    
+    addSuggestion(guildId, userId, content) {
+        if (!this.userSuggestions.has(guildId)) {
+            this.userSuggestions.set(guildId, new Map());
+        }
+        
+        const guildSuggestions = this.userSuggestions.get(guildId);
+        if (!guildSuggestions.has(userId)) {
+            guildSuggestions.set(userId, []);
+        }
+        
+        const userSugs = guildSuggestions.get(userId);
+        const suggestionId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+        
+        const suggestion = {
+            id: suggestionId,
+            userId: userId,
+            content: content,
+            timestamp: Date.now(),
+            votes: { up: 0, down: 0 },
+            voters: new Set()
+        };
+        
+        userSugs.push(suggestion);
+        
+        if (!this.suggestions.has(guildId)) {
+            this.suggestions.set(guildId, new Map());
+        }
+        this.suggestions.get(guildId).set(suggestionId, suggestion);
+        
+        return suggestion;
+    }
+    
+    getSuggestion(guildId, suggestionId) {
+        return this.suggestions.get(guildId)?.get(suggestionId);
+    }
+    
+    addVote(guildId, suggestionId, userId, voteType) {
+        const suggestion = this.getSuggestion(guildId, suggestionId);
+        if (!suggestion) return false;
+        
+        if (suggestion.voters.has(userId)) {
             return false;
         }
-    }
-    
-    static escapeMarkdown(text) {
-        return text.replace(/([*_~`|])/g, '\\$1');
-    }
-    
-    static truncate(text, maxLength = 1000) {
-        if (text.length <= maxLength) return text;
-        return text.substring(0, maxLength - 3) + '...';
-    }
-    
-    static generateId(prefix = '') {
-        return `${prefix}${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    }
-    
-    static async sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-    
-    static chunkArray(array, size) {
-        const chunked = [];
-        for (let i = 0; i < array.length; i += size) {
-            chunked.push(array.slice(i, i + size));
-        }
-        return chunked;
-    }
-}
-
-class PermissionManager {
-    static isOwner(userId) {
-        return userId === OWNER_ID;
-    }
-    
-    static hasAdminPermission(member) {
-        return member.permissions.has(PermissionsBitField.Flags.Administrator);
-    }
-    
-    static hasManageGuild(member) {
-        return member.permissions.has(PermissionsBitField.Flags.ManageGuild);
-    }
-    
-    static canManageSuggestions(member, config) {
-        if (this.isOwner(member.id)) return true;
-        if (this.hasAdminPermission(member)) return true;
-        if (this.hasManageGuild(member)) return true;
-        return false;
-    }
-}
-
-// ============================================
-// GESTÃO DE CONFIGURAÇÕES
-// ============================================
-
-class ConfigManager {
-    constructor() {
-        this.configPath = path.join(__dirname, 'suggestions_config.json');
-        this.loadConfig();
-    }
-    
-    loadConfig() {
-        try {
-            if (fs.existsSync(this.configPath)) {
-                const data = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
-                for (const [guildId, config] of Object.entries(data)) {
-                    client.suggestionsConfig.set(guildId, { ...DEFAULT_CONFIG, ...config });
-                }
-                Logger.success('Configurações carregadas com sucesso!');
-            } else {
-                Logger.warn('Arquivo de configurações não encontrado. Usando padrões.');
-            }
-        } catch (error) {
-            Logger.error(`Erro ao carregar configurações: ${error.message}`);
-        }
-    }
-    
-    saveConfig() {
-        try {
-            const config = {};
-            for (const [guildId, settings] of client.suggestionsConfig) {
-                config[guildId] = settings;
-            }
-            fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
-            Logger.debug('Configurações salvas com sucesso!');
-        } catch (error) {
-            Logger.error(`Erro ao salvar configurações: ${error.message}`);
-        }
-    }
-    
-    getConfig(guildId) {
-        if (!client.suggestionsConfig.has(guildId)) {
-            client.suggestionsConfig.set(guildId, { ...DEFAULT_CONFIG });
-            this.saveConfig();
-        }
-        return client.suggestionsConfig.get(guildId);
-    }
-    
-    updateConfig(guildId, updates) {
-        const current = this.getConfig(guildId);
-        const updated = { ...current, ...updates };
-        client.suggestionsConfig.set(guildId, updated);
-        this.saveConfig();
-        return updated;
-    }
-    
-    resetConfig(guildId) {
-        client.suggestionsConfig.set(guildId, { ...DEFAULT_CONFIG });
-        this.saveConfig();
-        return DEFAULT_CONFIG;
-    }
-}
-
-const configManager = new ConfigManager();
-
-// ============================================
-// CRIAÇÃO DE EMBEDS E COMPONENTES
-// ============================================
-
-class EmbedBuilder {
-    static suggestionEmbed(suggestion, config, user) {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColor)
-            .setTitle(`💡 Sugestão #${suggestion.id}`)
-            .setDescription(Utils.truncate(suggestion.content, 4000))
-            .setTimestamp()
-            .setFooter({ text: config.footerText });
         
-        if (suggestion.anonymous) {
-            embed.setAuthor({ name: 'Sugestão Anônima', iconURL: 'https://cdn.discordapp.com/embed/avatars/0.png' });
+        if (voteType === 'up') {
+            suggestion.votes.up++;
         } else {
-            embed.setAuthor({ 
-                name: user.username, 
-                iconURL: user.displayAvatarURL({ dynamic: true }) 
-            });
+            suggestion.votes.down++;
         }
         
-        if (suggestion.attachments && suggestion.attachments.length > 0) {
-            embed.addFields({
-                name: '📎 Anexos',
-                value: suggestion.attachments.map((url, i) => `[Anexo ${i + 1}](${url})`).join('\n'),
-                inline: false
-            });
-        }
-        
-        embed.addFields(
-            { name: '📊 Status', value: '🟡 Pendente', inline: true },
-            { name: '👍 Votos', value: '0', inline: true },
-            { name: '👎 Votos', value: '0', inline: true }
-        );
-        
-        return embed;
+        suggestion.voters.add(userId);
+        return true;
     }
     
-    static configEmbed(config, guild) {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColor)
-            .setTitle('⚙️ Configurações do Sistema de Sugestões')
-            .setDescription('Configurações atuais do bot para este servidor:')
-            .addFields(
-                { 
-                    name: '📝 Canal de Sugestões', 
-                    value: config.suggestionsChannel ? `<#${config.suggestionsChannel}>` : '❌ Não configurado',
-                    inline: true 
-                },
-                { 
-                    name: '📤 Canal de Envio', 
-                    value: config.outputChannel ? `<#${config.outputChannel}>` : '❌ Não configurado',
-                    inline: true 
-                },
-                { 
-                    name: '⏱️ Cooldown', 
-                    value: Utils.formatDuration(config.cooldown),
-                    inline: true 
-                },
-                { 
-                    name: '📊 Limite Diário', 
-                    value: `${config.maxSuggestionsPerDay} sugestões`,
-                    inline: true 
-                },
-                { 
-                    name: '👤 Anônimo', 
-                    value: config.allowAnonymous ? '✅ Permitido' : '❌ Não permitido',
-                    inline: true 
-                },
-                { 
-                    name: '✏️ Tamanho', 
-                    value: `${config.minLength}-${config.maxLength} caracteres`,
-                    inline: true 
-                }
-            )
-            .setTimestamp()
-            .setFooter({ text: `Servidor: ${guild.name}` });
-        
-        return embed;
-    }
-    
-    static helpEmbed(prefix) {
-        const embed = new EmbedBuilder()
-            .setColor('#5865F2')
-            .setTitle('📚 Comandos do Bot de Sugestões')
-            .setDescription('Aqui estão todos os comandos disponíveis:')
-            .addFields(
-                {
-                    name: '🔷 Comandos Slash (/)',
-                    value: [
-                        '`/suggestions canal:<canal>` - Configura o canal de sugestões',
-                        '`/suggestionschannel canal:<canal>` - Configura o canal de envio',
-                        '`/suggest` - Abre modal para enviar sugestão',
-                        '`/config` - Mostra configurações atuais',
-                        '`/help` - Mostra esta mensagem'
-                    ].join('\n'),
-                    inline: false
-                },
-                {
-                    name: `🔶 Comandos de Prefixo (${prefix})`,
-                    value: [
-                        '`!ping` - Mostra latência do bot',
-                        '`!uptime` - Mostra tempo online',
-                        '`!stats` - Estatísticas do bot',
-                        '`!config` - Configurações do servidor',
-                        '`!reset` - Reseta configurações',
-                        '`!info` - Informações do bot',
-                        '`!suggest` - Envia uma sugestão',
-                        '`!invite` - Link de convite do bot',
-                        '`!serverinfo` - Info do servidor',
-                        '`!userinfo` - Info do usuário'
-                    ].join('\n'),
-                    inline: false
-                },
-                {
-                    name: '👑 Comandos do Owner',
-                    value: [
-                        '`!eval` - Executa código JavaScript',
-                        '`!reload` - Recarrega comandos',
-                        '`!shutdown` - Desliga o bot',
-                        '`!servers` - Lista servidores',
-                        '`!blacklist` - Gerencia blacklist',
-                        '`!announce` - Anúncio global'
-                    ].join('\n'),
-                    inline: false
-                }
-            )
-            .setTimestamp()
-            .setFooter({ text: 'Desenvolvido com ❤️ para Discord' });
-        
-        return embed;
-    }
-    
-    static welcomeEmbed(guild) {
-        return new EmbedBuilder()
-            .setColor('#00FF00')
-            .setTitle('🎉 Bot de Sugestões Online!')
-            .setDescription([
-                'Obrigado por me adicionar ao seu servidor!',
-                '',
-                'Para começar a usar o sistema de sugestões, configure os canais:',
-                '1. Use `/suggestions` para definir o canal onde os usuários enviarão sugestões',
-                '2. Use `/suggestionschannel` para definir onde as sugestões serão postadas',
-                '',
-                'Digite `/help` para ver todos os comandos disponíveis!'
-            ].join('\n'))
-            .setTimestamp();
+    getUserSuggestions(guildId, userId) {
+        return this.userSuggestions.get(guildId)?.get(userId) || [];
     }
 }
 
-class ComponentBuilder {
-    static createSuggestionButton() {
-        return new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('create_suggestion')
-                    .setLabel('📝 Enviar Sugestão')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('💡')
-            );
-    }
-    
-    static createVoteButtons() {
-        return new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('vote_up')
-                    .setLabel('👍')
-                    .setStyle(ButtonStyle.Success),
-                new ButtonBuilder()
-                    .setCustomId('vote_down')
-                    .setLabel('👎')
-                    .setStyle(ButtonStyle.Danger),
-                new ButtonBuilder()
-                    .setCustomId('suggestion_info')
-                    .setLabel('ℹ️ Info')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('report_suggestion')
-                    .setLabel('🚩 Reportar')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-    }
-    
-    static createConfigButtons() {
-        return new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('toggle_anonymous')
-                    .setLabel('Alternar Anônimo')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('👤'),
-                new ButtonBuilder()
-                    .setCustomId('set_cooldown')
-                    .setLabel('Configurar Cooldown')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('⏱️'),
-                new ButtonBuilder()
-                    .setCustomId('reset_config')
-                    .setLabel('Resetar Config')
-                    .setStyle(ButtonStyle.Danger)
-                    .setEmoji('🔄')
-            );
-    }
-    
-    static createSuggestionModal() {
-        const modal = new ModalBuilder()
-            .setCustomId('suggestion_modal')
-            .setTitle('📝 Enviar Sugestão');
-        
-        const titleInput = new TextInputBuilder()
-            .setCustomId('suggestion_title')
-            .setLabel('Título da Sugestão')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('Ex: Adicionar canal de música')
-            .setRequired(true)
-            .setMinLength(5)
-            .setMaxLength(100);
-        
-        const descriptionInput = new TextInputBuilder()
-            .setCustomId('suggestion_description')
-            .setLabel('Descreva sua sugestão em detalhes')
-            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Explique sua sugestão, por que seria útil, como implementar, etc...')
-            .setRequired(true)
-            .setMinLength(10)
-            .setMaxLength(1000);
-        
-        const anonymousInput = new TextInputBuilder()
-            .setCustomId('suggestion_anonymous')
-            .setLabel('Enviar anonimamente? (sim/não)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('Digite "sim" ou "não"')
-            .setRequired(false)
-            .setValue('não')
-            .setMinLength(2)
-            .setMaxLength(3);
-        
-        const firstRow = new ActionRowBuilder().addComponents(titleInput);
-        const secondRow = new ActionRowBuilder().addComponents(descriptionInput);
-        const thirdRow = new ActionRowBuilder().addComponents(anonymousInput);
-        
-        modal.addComponents(firstRow, secondRow, thirdRow);
-        return modal;
-    }
-}
+const suggestionManager = new SuggestionManager();
 
 // ============================================
-// COMANDOS SLASH
+// COMANDOS COM PREFIXO (!)
 // ============================================
 
-const slashCommands = [
-    {
-        data: new SlashCommandBuilder()
-            .setName('suggestions')
-            .setDescription('Configura o canal onde os usuários podem enviar sugestões')
-            .addChannelOption(option =>
-                option.setName('canal')
-                    .setDescription('Canal para envio de sugestões')
-                    .setRequired(true)
-                    .addChannelTypes(ChannelType.GuildText)
-            ),
-        async execute(interaction) {
-            const { member, guild, options } = interaction;
-            const channel = options.getChannel('canal');
-            
-            if (!PermissionManager.canManageSuggestions(member, configManager.getConfig(guild.id))) {
-                return interaction.reply({ 
-                    content: '❌ Você não tem permissão para usar este comando!', 
-                    ephemeral: true 
-                });
-            }
-            
-            const config = configManager.updateConfig(guild.id, { 
-                suggestionsChannel: channel.id 
-            });
-            
-            const embed = new EmbedBuilder()
-                .setColor(config.embedColor)
-                .setTitle('✅ Canal de Sugestões Configurado!')
-                .setDescription(`Os usuários agora podem enviar sugestões em ${channel}`)
-                .addFields(
-                    { name: '📝 Como funciona?', value: [
-                        '1. Os usuários clicam no botão abaixo',
-                        '2. Preenchem o formulário com sua sugestão',
-                        '3. A sugestão é enviada para moderação',
-                        '4. Após aprovada, vai para o canal de saída'
-                    ].join('\n') }
-                )
-                .setTimestamp();
-            
-            const button = ComponentBuilder.createSuggestionButton();
-            
-            await interaction.reply({ embeds: [embed] });
-            await channel.send({ 
-                embeds: [EmbedBuilder.welcomeEmbed(guild)],
-                components: [button] 
-            });
-            
-            Logger.command(interaction.user.tag, '/suggestions', channel.name);
-        }
-    },
-    {
-        data: new SlashCommandBuilder()
-            .setName('suggestionschannel')
-            .setDescription('Configura o canal onde as sugestões serão postadas')
-            .addChannelOption(option =>
-                option.setName('canal')
-                    .setDescription('Canal para postagem das sugestões')
-                    .setRequired(true)
-                    .addChannelTypes(ChannelType.GuildText)
-            ),
-        async execute(interaction) {
-            const { member, guild, options } = interaction;
-            const channel = options.getChannel('canal');
-            
-            if (!PermissionManager.canManageSuggestions(member, configManager.getConfig(guild.id))) {
-                return interaction.reply({ 
-                    content: '❌ Você não tem permissão para usar este comando!', 
-                    ephemeral: true 
-                });
-            }
-            
-            const config = configManager.updateConfig(guild.id, { 
-                outputChannel: channel.id 
-            });
-            
-            const embed = new EmbedBuilder()
-                .setColor(config.embedColor)
-                .setTitle('✅ Canal de Saída Configurado!')
-                .setDescription(`As sugestões aprovadas serão postadas em ${channel}`)
-                .addFields(
-                    { name: '📊 Sistema de Votação', value: [
-                        '• Os membros poderão votar usando 👍 e 👎',
-                        '• O bot adicionará reações automaticamente',
-                        '• Votos são registrados e contabilizados'
-                    ].join('\n') }
-                )
-                .setTimestamp();
-            
-            await interaction.reply({ embeds: [embed] });
-            
-            Logger.command(interaction.user.tag, '/suggestionschannel', channel.name);
-        }
-    },
-    {
-        data: new SlashCommandBuilder()
-            .setName('suggest')
-            .setDescription('Envia uma nova sugestão para o servidor'),
-        async execute(interaction) {
-            const config = configManager.getConfig(interaction.guild.id);
-            
-            if (!config.suggestionsChannel) {
-                return interaction.reply({ 
-                    content: '❌ O sistema de sugestões não está configurado neste servidor!', 
-                    ephemeral: true 
-                });
-            }
-            
-            const modal = ComponentBuilder.createSuggestionModal();
-            await interaction.showModal(modal);
-            
-            Logger.command(interaction.user.tag, '/suggest');
-        }
-    },
-    {
-        data: new SlashCommandBuilder()
-            .setName('config')
-            .setDescription('Mostra as configurações atuais do sistema de sugestões'),
-        async execute(interaction) {
-            const config = configManager.getConfig(interaction.guild.id);
-            const embed = EmbedBuilder.configEmbed(config, interaction.guild);
-            
-            await interaction.reply({ embeds: [embed] });
-            Logger.command(interaction.user.tag, '/config');
-        }
-    },
-    {
-        data: new SlashCommandBuilder()
-            .setName('help')
-            .setDescription('Mostra todos os comandos disponíveis'),
-        async execute(interaction) {
-            const embed = EmbedBuilder.helpEmbed(PREFIX);
-            await interaction.reply({ embeds: [embed] });
-            Logger.command(interaction.user.tag, '/help');
-        }
-    }
-];
+// Cooldown para comandos com prefixo
+const prefixCooldowns = new Collection();
+const PREFIX = '!';
+const COOLDOWN_TIME = 3000; // 3 segundos
 
-// ============================================
-// COMANDOS DE PREFIXO
-// ============================================
-
-const prefixCommands = {
-    ping: {
-        name: 'ping',
-        description: 'Mostra a latência do bot',
-        execute: async (message, args) => {
-            const sent = await message.reply('🏓 Pong!');
-            const latency = sent.createdTimestamp - message.createdTimestamp;
-            const apiLatency = Math.round(client.ws.ping);
-            
-            const embed = new EmbedBuilder()
-                .setColor('#00FF00')
-                .setTitle('🏓 Pong!')
-                .addFields(
-                    { name: '📡 Latência do Bot', value: `${latency}ms`, inline: true },
-                    { name: '🌐 Latência da API', value: `${apiLatency}ms`, inline: true },
-                    { name: '⏱️ Uptime', value: Utils.formatDuration(client.uptime), inline: true }
-                )
-                .setTimestamp();
-            
-            await sent.edit({ content: null, embeds: [embed] });
-        }
-    },
-    uptime: {
-        name: 'uptime',
-        description: 'Mostra há quanto tempo o bot está online',
-        execute: async (message, args) => {
-            const embed = new EmbedBuilder()
-                .setColor('#00FF00')
-                .setTitle('⏱️ Uptime do Bot')
-                .setDescription(`O bot está online há ${Utils.formatDuration(client.uptime)}`)
-                .addFields(
-                    { name: '📅 Iniciado em', value: new Date(Date.now() - client.uptime).toLocaleString(), inline: true },
-                    { name: '🏠 Servidores', value: `${client.guilds.cache.size}`, inline: true },
-                    { name: '👥 Usuários', value: `${client.users.cache.size}`, inline: true }
-                )
-                .setTimestamp();
-            
-            await message.reply({ embeds: [embed] });
-        }
-    },
-    stats: {
-        name: 'stats',
-        description: 'Mostra estatísticas do bot',
-        execute: async (message, args) => {
-            let totalMembers = 0;
-            client.guilds.cache.forEach(guild => totalMembers += guild.memberCount);
-            
-            const embed = new EmbedBuilder()
-                .setColor('#5865F2')
-                .setTitle('📊 Estatísticas do Bot')
-                .addFields(
-                    { name: '🏠 Servidores', value: `${client.guilds.cache.size}`, inline: true },
-                    { name: '👥 Usuários Totais', value: `${totalMembers}`, inline: true },
-                    { name: '💾 Memória Usada', value: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`, inline: true },
-                    { name: '📝 Comandos Prefixo', value: `${client.prefixCommands.size}`, inline: true },
-                    { name: '🔷 Comandos Slash', value: `${client.slashCommands.size}`, inline: true },
-                    { name: '⚙️ Node.js', value: process.version, inline: true },
-                    { name: '📚 Discord.js', value: `v${require('discord.js').version}`, inline: true },
-                    { name: '🕒 Último Reinício', value: new Date(Date.now() - client.uptime).toLocaleString(), inline: true }
-                )
-                .setTimestamp();
-            
-            await message.reply({ embeds: [embed] });
-        }
-    },
-    config: {
-        name: 'config',
-        description: 'Mostra as configurações do servidor',
-        execute: async (message, args) => {
-            const config = configManager.getConfig(message.guild.id);
-            const embed = EmbedBuilder.configEmbed(config, message.guild);
-            await message.reply({ embeds: [embed] });
-        }
-    },
-    reset: {
-        name: 'reset',
-        description: 'Reseta as configurações do servidor',
-        execute: async (message, args) => {
-            if (!PermissionManager.canManageSuggestions(message.member, configManager.getConfig(message.guild.id))) {
-                return message.reply('❌ Você não tem permissão para usar este comando!');
-            }
-            
-            configManager.resetConfig(message.guild.id);
-            await message.reply('✅ Configurações resetadas para o padrão!');
-        }
-    },
-    info: {
-        name: 'info',
-        description: 'Informações sobre o bot',
-        execute: async (message, args) => {
-            const embed = new EmbedBuilder()
-                .setColor('#5865F2')
-                .setTitle('🤖 Informações do Bot')
-                .setDescription('Bot de Sugestões para Discord - Sistema completo de gerenciamento de sugestões')
-                .addFields(
-                    { name: '👨‍💻 Desenvolvedor', value: `<@${OWNER_ID}>`, inline: true },
-                    { name: '📝 Versão', value: '2.0.0', inline: true },
-                    { name: '📚 Biblioteca', value: 'Discord.js v14', inline: true },
-                    { name: '🔗 GitHub', value: '[Repositório](https://github.com)', inline: true },
-                    { name: '💡 Prefixo', value: PREFIX, inline: true },
-                    { name: '⚡ Slash Commands', value: 'Suportado', inline: true }
-                )
-                .setTimestamp();
-            
-            await message.reply({ embeds: [embed] });
-        }
-    },
-    suggest: {
-        name: 'suggest',
-        description: 'Envia uma sugestão rapidamente',
-        execute: async (message, args) => {
-            const config = configManager.getConfig(message.guild.id);
-            
-            if (!config.suggestionsChannel) {
-                return message.reply('❌ O sistema de sugestões não está configurado!');
-            }
-            
-            const suggestionText = args.join(' ');
-            if (!suggestionText) {
-                return message.reply('❌ Você precisa fornecer o texto da sugestão! Exemplo: `!suggest Adicionar canal de música`');
-            }
-            
-            if (suggestionText.length < config.minLength) {
-                return message.reply(`❌ A sugestão deve ter pelo menos ${config.minLength} caracteres!`);
-            }
-            
-            if (suggestionText.length > config.maxLength) {
-                return message.reply(`❌ A sugestão deve ter no máximo ${config.maxLength} caracteres!`);
-            }
-            
-            // Verificar cooldown
-            const userId = message.author.id;
-            const lastSuggestion = client.userSuggestions.get(userId);
-            if (lastSuggestion && Date.now() - lastSuggestion < config.cooldown) {
-                const remaining = Utils.formatDuration(config.cooldown - (Date.now() - lastSuggestion));
-                return message.reply(`⏱️ Aguarde ${remaining} antes de enviar outra sugestão!`);
-            }
-            
-            // Processar sugestão
-            const suggestionId = client.suggestionsCount.get(message.guild.id) || 0;
-            const suggestion = {
-                id: suggestionId + 1,
-                content: suggestionText,
-                anonymous: false,
-                timestamp: Date.now(),
-                author: message.author.id
-            };
-            
-            // Enviar para o canal de saída
-            const outputChannel = message.guild.channels.cache.get(config.outputChannel);
-            if (outputChannel) {
-                const embed = EmbedBuilder.suggestionEmbed(suggestion, config, message.author);
-                const buttons = ComponentBuilder.createVoteButtons();
-                
-                const msg = await outputChannel.send({ embeds: [embed], components: [buttons] });
-                await msg.react('👍');
-                await msg.react('👎');
-                
-                // Atualizar contador
-                client.suggestionsCount.set(message.guild.id, suggestion.id);
-                client.userSuggestions.set(userId, Date.now());
-                
-                await message.reply(`✅ Sugestão #${suggestion.id} enviada com sucesso!`);
-            } else {
-                await message.reply('❌ Canal de saída não configurado!');
-            }
-        }
-    },
-    invite: {
-        name: 'invite',
-        description: 'Gera um link de convite para o bot',
-        execute: async (message, args) => {
-            const inviteLink = `https://discord.com/oauth2/authorize?client_id=${client.user.id}&permissions=8&scope=bot%20applications.commands`;
-            
-            const embed = new EmbedBuilder()
-                .setColor('#5865F2')
-                .setTitle('🔗 Convite do Bot')
-                .setDescription(`[Clique aqui para me adicionar ao seu servidor!](${inviteLink})`)
-                .addFields(
-                    { name: '📋 Permissões', value: 'Administrador (Recomendado)', inline: true },
-                    { name: '🔷 Slash Commands', value: 'Incluído', inline: true }
-                )
-                .setTimestamp();
-            
-            await message.reply({ embeds: [embed] });
-        }
-    },
-    serverinfo: {
-        name: 'serverinfo',
-        description: 'Mostra informações do servidor',
-        execute: async (message, args) => {
-            const { guild } = message;
-            
-            const embed = new EmbedBuilder()
-                .setColor('#5865F2')
-                .setTitle(`📊 Informações de ${guild.name}`)
-                .setThumbnail(guild.iconURL({ dynamic: true }))
-                .addFields(
-                    { name: '👑 Dono', value: `<@${guild.ownerId}>`, inline: true },
-                    { name: '📅 Criado em', value: guild.createdAt.toLocaleDateString(), inline: true },
-                    { name: '👥 Membros', value: `${guild.memberCount}`, inline: true },
-                    { name: '💬 Canais', value: `${guild.channels.cache.size}`, inline: true },
-                    { name: '🎭 Cargos', value: `${guild.roles.cache.size}`, inline: true },
-                    { name: '😊 Emojis', value: `${guild.emojis.cache.size}`, inline: true },
-                    { name: '🚀 Impulsos', value: `${guild.premiumSubscriptionCount || 0}`, inline: true },
-                    { name: '⭐ Nível de Impulso', value: `${guild.premiumTier}`, inline: true }
-                )
-                .setTimestamp();
-            
-            await message.reply({ embeds: [embed] });
-        }
-    },
-    userinfo: {
-        name: 'userinfo',
-        description: 'Mostra informações de um usuário',
-        execute: async (message, args) => {
-            const user = message.mentions.users.first() || message.author;
-            const member = message.guild.members.cache.get(user.id);
-            
-            const embed = new EmbedBuilder()
-                .setColor(member?.displayColor || '#5865F2')
-                .setTitle(`👤 Informações de ${user.tag}`)
-                .setThumbnail(user.displayAvatarURL({ dynamic: true }))
-                .addFields(
-                    { name: '🆔 ID', value: user.id, inline: true },
-                    { name: '📅 Conta criada em', value: user.createdAt.toLocaleDateString(), inline: true },
-                    { name: '📥 Entrou em', value: member?.joinedAt?.toLocaleDateString() || 'N/A', inline: true },
-                    { name: '🎭 Cargos', value: `${member?.roles.cache.size || 0}`, inline: true },
-                    { name: '👑 Cargo mais alto', value: member?.roles.highest?.toString() || 'Nenhum', inline: true }
-                )
-                .setTimestamp();
-            
-            await message.reply({ embeds: [embed] });
-        }
-    }
-};
-
-// Comandos do Owner
-const ownerCommands = {
-    eval: {
-        name: 'eval',
-        description: 'Executa código JavaScript (Owner apenas)',
-        execute: async (message, args) => {
-            if (!PermissionManager.isOwner(message.author.id)) return;
-            
-            try {
-                const code = args.join(' ');
-                let evaled = eval(code);
-                
-                if (typeof evaled !== 'string') {
-                    evaled = require('util').inspect(evaled);
-                }
-                
-                const embed = new EmbedBuilder()
-                    .setColor('#00FF00')
-                    .setTitle('✅ Eval Executado')
-                    .setDescription(`\`\`\`js\n${Utils.truncate(evaled, 1990)}\n\`\`\``)
-                    .setTimestamp();
-                
-                await message.reply({ embeds: [embed] });
-            } catch (error) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FF0000')
-                    .setTitle('❌ Erro no Eval')
-                    .setDescription(`\`\`\`\n${error}\n\`\`\``)
-                    .setTimestamp();
-                
-                await message.reply({ embeds: [embed] });
-            }
-        }
-    },
-    reload: {
-        name: 'reload',
-        description: 'Recarrega os comandos do bot (Owner apenas)',
-        execute: async (message, args) => {
-            if (!PermissionManager.isOwner(message.author.id)) return;
-            
-            await message.reply('🔄 Recarregando comandos...');
-            
-            try {
-                // Recarregar comandos slash
-                const rest = new REST({ version: '10' }).setToken(TOKEN);
-                await rest.put(Routes.applicationCommands(CLIENT_ID || client.user.id), { 
-                    body: slashCommands.map(cmd => cmd.data.toJSON()) 
-                });
-                
-                Logger.success('Comandos slash recarregados!');
-                await message.reply('✅ Comandos recarregados com sucesso!');
-            } catch (error) {
-                Logger.error(`Erro ao recarregar comandos: ${error.message}`);
-                await message.reply(`❌ Erro ao recarregar comandos: ${error.message}`);
-            }
-        }
-    },
-    shutdown: {
-        name: 'shutdown',
-        description: 'Desliga o bot (Owner apenas)',
-        execute: async (message, args) => {
-            if (!PermissionManager.isOwner(message.author.id)) return;
-            
-            await message.reply('👋 Desligando o bot...');
-            Logger.warn(`Bot desligado por ${message.author.tag}`);
-            
-            configManager.saveConfig();
-            await Utils.sleep(1000);
-            process.exit(0);
-        }
-    },
-    servers: {
-        name: 'servers',
-        description: 'Lista todos os servidores (Owner apenas)',
-        execute: async (message, args) => {
-            if (!PermissionManager.isOwner(message.author.id)) return;
-            
-            const guilds = client.guilds.cache.map(g => `${g.name} (${g.id}) - ${g.memberCount} membros`);
-            const chunks = Utils.chunkArray(guilds, 10);
-            
-            for (const chunk of chunks) {
-                const embed = new EmbedBuilder()
-                    .setColor('#5865F2')
-                    .setTitle(`📋 Servidores (${client.guilds.cache.size})`)
-                    .setDescription(chunk.join('\n'))
-                    .setTimestamp();
-                
-                await message.reply({ embeds: [embed] });
-            }
-        }
-    },
-    announce: {
-        name: 'announce',
-        description: 'Envia anúncio para todos os servidores (Owner apenas)',
-        execute: async (message, args) => {
-            if (!PermissionManager.isOwner(message.author.id)) return;
-            
-            const announcement = args.join(' ');
-            if (!announcement) {
-                return message.reply('❌ Forneça o texto do anúncio!');
-            }
-            
-            const embed = new EmbedBuilder()
-                .setColor('#FFA500')
-                .setTitle('📢 Anúncio do Desenvolvedor')
-                .setDescription(announcement)
-                .setTimestamp()
-                .setFooter({ text: 'Anúncio oficial' });
-            
-            let count = 0;
-            for (const guild of client.guilds.cache.values()) {
-                const channel = guild.systemChannel || guild.channels.cache.find(c => c.type === ChannelType.GuildText);
-                if (channel) {
-                    try {
-                        await channel.send({ embeds: [embed] });
-                        count++;
-                    } catch (error) {
-                        Logger.error(`Erro ao enviar anúncio para ${guild.name}: ${error.message}`);
-                    }
-                }
-            }
-            
-            await message.reply(`✅ Anúncio enviado para ${count} servidores!`);
-        }
-    }
-};
-
-// ============================================
-// EVENT HANDLERS
-// ============================================
-
-client.once(Events.ClientReady, async () => {
-    Logger.success(`Bot conectado como ${client.user.tag}!`);
-    Logger.info(`ID do Bot: ${client.user.id}`);
-    Logger.info(`Servidores: ${client.guilds.cache.size}`);
-    Logger.info(`Usuários: ${client.users.cache.size}`);
-    
-    // Registrar comandos slash
-    const rest = new REST({ version: '10' }).setToken(TOKEN);
-    
-    try {
-        Logger.info('🔄 Registrando comandos slash...');
-        
-        if (CLIENT_ID) {
-            await rest.put(Routes.applicationCommands(CLIENT_ID), { 
-                body: slashCommands.map(cmd => cmd.data.toJSON()) 
-            });
-        } else {
-            await rest.put(Routes.applicationCommands(client.user.id), { 
-                body: slashCommands.map(cmd => cmd.data.toJSON()) 
-            });
-        }
-        
-        Logger.success('✅ Comandos slash registrados com sucesso!');
-    } catch (error) {
-        Logger.error(`❌ Erro ao registrar comandos slash: ${error.message}`);
-    }
-    
-    // Listar comandos de prefixo no console
-    console.log('\n' + '='.repeat(50));
-    console.log('\x1b[36m%s\x1b[0m', '📋 COMANDOS DE PREFIXO DISPONÍVEIS (!):');
-    console.log('='.repeat(50));
-    
-    for (const [name, cmd] of Object.entries(prefixCommands)) {
-        console.log(`\x1b[33m!${name.padEnd(15)}\x1b[0m - \x1b[90m${cmd.description}\x1b[0m`);
-    }
-    
-    console.log('\n\x1b[35m%s\x1b[0m', '👑 COMANDOS DO OWNER (!):');
-    console.log('='.repeat(50));
-    
-    for (const [name, cmd] of Object.entries(ownerCommands)) {
-        console.log(`\x1b[31m!${name.padEnd(15)}\x1b[0m - \x1b[90m${cmd.description}\x1b[0m`);
-    }
-    
-    console.log('\n' + '='.repeat(50));
-    console.log('\x1b[32m%s\x1b[0m', '✅ Bot pronto para uso!');
-    console.log('='.repeat(50) + '\n');
-});
-
-client.on(Events.InteractionCreate, async interaction => {
-    try {
-        if (interaction.isChatInputCommand()) {
-            const command = slashCommands.find(cmd => cmd.data.name === interaction.commandName);
-            
-            if (!command) {
-                Logger.warn(`Comando não encontrado: ${interaction.commandName}`);
-                return;
-            }
-            
-            await command.execute(interaction);
-        }
-        
-        if (interaction.isButton()) {
-            const { customId } = interaction;
-            
-            if (customId === 'create_suggestion') {
-                const config = configManager.getConfig(interaction.guild.id);
-                
-                if (!config.suggestionsChannel) {
-                    return interaction.reply({ 
-                        content: '❌ O sistema de sugestões não está configurado!', 
-                        ephemeral: true 
-                    });
-                }
-                
-                const modal = ComponentBuilder.createSuggestionModal();
-                await interaction.showModal(modal);
-            }
-            
-            if (customId === 'vote_up' || customId === 'vote_down') {
-                const config = configManager.getConfig(interaction.guild.id);
-                const userId = interaction.user.id;
-                
-                // Verificar se já votou
-                const voteKey = `${interaction.message.id}_${userId}`;
-                if (client.activeButtons.has(voteKey)) {
-                    return interaction.reply({ 
-                        content: '❌ Você já votou nesta sugestão!', 
-                        ephemeral: true 
-                    });
-                }
-                
-                // Registrar voto
-                client.activeButtons.set(voteKey, true);
-                
-                const embed = EmbedBuilder.from(interaction.message.embeds[0]);
-                const fields = embed.data.fields;
-                
-                if (fields) {
-                    const voteField = fields.find(f => f.name.includes(customId === 'vote_up' ? '👍' : '👎'));
-                    if (voteField) {
-                        const currentVotes = parseInt(voteField.value) || 0;
-                        voteField.value = (currentVotes + 1).toString();
-                    }
-                }
-                
-                await interaction.message.edit({ embeds: [embed] });
-                await interaction.reply({ 
-                    content: `✅ Seu voto foi registrado!`, 
-                    ephemeral: true 
-                });
-                
-                // Limpar após 1 hora
-                setTimeout(() => client.activeButtons.delete(voteKey), 3600000);
-            }
-            
-            if (customId === 'suggestion_info') {
-                const embed = new EmbedBuilder()
-                    .setColor('#5865F2')
-                    .setTitle('ℹ️ Informações da Sugestão')
-                    .setDescription([
-                        '**Como funciona o sistema de sugestões:**',
-                        '• Vote 👍 se você gostou da sugestão',
-                        '• Vote 👎 se você não concorda',
-                        '• Cada usuário pode votar apenas uma vez',
-                        '• Sugestões com mais votos têm mais chances de serem implementadas'
-                    ].join('\n'))
-                    .setTimestamp();
-                
-                await interaction.reply({ embeds: [embed], ephemeral: true });
-            }
-            
-            if (customId === 'report_suggestion') {
-                await interaction.reply({ 
-                    content: '🚩 Sugestão reportada para a moderação. Obrigado!', 
-                    ephemeral: true 
-                });
-                
-                // Notificar moderadores
-                const config = configManager.getConfig(interaction.guild.id);
-                if (config.notifications.onSuggestion) {
-                    const modChannel = interaction.guild.channels.cache.get(config.suggestionsChannel);
-                    if (modChannel) {
-                        await modChannel.send(`🚩 Sugestão reportada por ${interaction.user.tag} em ${interaction.message.url}`);
-                    }
-                }
-            }
-            
-            if (customId === 'toggle_anonymous') {
-                if (!PermissionManager.canManageSuggestions(interaction.member, configManager.getConfig(interaction.guild.id))) {
-                    return interaction.reply({ content: '❌ Sem permissão!', ephemeral: true });
-                }
-                
-                const config = configManager.getConfig(interaction.guild.id);
-                config.allowAnonymous = !config.allowAnonymous;
-                configManager.updateConfig(interaction.guild.id, config);
-                
-                await interaction.reply({ 
-                    content: `✅ Sugestões anônimas agora estão ${config.allowAnonymous ? 'ativadas' : 'desativadas'}!`, 
-                    ephemeral: true 
-                });
-            }
-        }
-        
-        if (interaction.isModalSubmit()) {
-            if (interaction.customId === 'suggestion_modal') {
-                const title = interaction.fields.getTextInputValue('suggestion_title');
-                const description = interaction.fields.getTextInputValue('suggestion_description');
-                const anonymousInput = interaction.fields.getTextInputValue('suggestion_anonymous');
-                
-                const config = configManager.getConfig(interaction.guild.id);
-                const isAnonymous = anonymousInput.toLowerCase() === 'sim';
-                
-                // Validações
-                if (description.length < config.minLength) {
-                    return interaction.reply({ 
-                        content: `❌ A sugestão deve ter pelo menos ${config.minLength} caracteres!`, 
-                        ephemeral: true 
-                    });
-                }
-                
-                if (description.length > config.maxLength) {
-                    return interaction.reply({ 
-                        content: `❌ A sugestão deve ter no máximo ${config.maxLength} caracteres!`, 
-                        ephemeral: true 
-                    });
-                }
-                
-                // Verificar cooldown
-                const userId = interaction.user.id;
-                const lastSuggestion = client.userSuggestions.get(userId);
-                if (lastSuggestion && Date.now() - lastSuggestion < config.cooldown) {
-                    const remaining = Utils.formatDuration(config.cooldown - (Date.now() - lastSuggestion));
-                    return interaction.reply({ 
-                        content: `⏱️ Aguarde ${remaining} antes de enviar outra sugestão!`, 
-                        ephemeral: true 
-                    });
-                }
-                
-                // Criar sugestão
-                const suggestionId = (client.suggestionsCount.get(interaction.guild.id) || 0) + 1;
-                const suggestion = {
-                    id: suggestionId,
-                    title: title,
-                    content: description,
-                    anonymous: isAnonymous && config.allowAnonymous,
-                    timestamp: Date.now(),
-                    author: interaction.user.id,
-                    status: 'pending'
-                };
-                
-                // Enviar para o canal de saída
-                const outputChannel = interaction.guild.channels.cache.get(config.outputChannel);
-                if (outputChannel) {
-                    const embed = EmbedBuilder.suggestionEmbed(suggestion, config, interaction.user);
-                    const buttons = ComponentBuilder.createVoteButtons();
-                    
-                    const msg = await outputChannel.send({ embeds: [embed], components: [buttons] });
-                    await msg.react('👍');
-                    await msg.react('👎');
-                    
-                    // Atualizar contadores
-                    client.suggestionsCount.set(interaction.guild.id, suggestionId);
-                    client.userSuggestions.set(userId, Date.now());
-                    
-                    await interaction.reply({ 
-                        content: `✅ Sugestão #${suggestionId} enviada com sucesso!`, 
-                        ephemeral: true 
-                    });
-                    
-                    Logger.success(`Nova sugestão #${suggestionId} de ${interaction.user.tag} em ${interaction.guild.name}`);
-                } else {
-                    await interaction.reply({ 
-                        content: '❌ Canal de saída não configurado! Contate um administrador.', 
-                        ephemeral: true 
-                    });
-                }
-            }
-        }
-    } catch (error) {
-        Logger.error(`Erro na interação: ${error.message}`);
-        
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ 
-                content: '❌ Ocorreu um erro ao processar sua solicitação!', 
-                ephemeral: true 
-            });
-        }
-    }
-});
-
-client.on(Events.MessageCreate, async message => {
+// Handler para comandos com prefixo
+client.on(Events.MessageCreate, async (message) => {
+    // Ignorar mensagens de bots
     if (message.author.bot) return;
     
-    // Verificar menção ao bot
-    if (message.content === `<@${client.user.id}>` || message.content === `<@!${client.user.id}>`) {
-        const embed = new EmbedBuilder()
-            .setColor('#5865F2')
-            .setTitle('👋 Olá! Eu sou o Bot de Sugestões')
-            .setDescription([
-                `Meu prefixo neste servidor é \`${PREFIX}\``,
-                '',
-                '**Comandos úteis:**',
-                `\`${PREFIX}help\` - Mostra todos os comandos`,
-                `\`${PREFIX}suggest\` - Envia uma sugestão`,
-                `\`${PREFIX}config\` - Mostra configurações`,
-                '',
-                '**Slash Commands:**',
-                '`/help` - Menu de ajuda interativo',
-                '`/suggest` - Enviar sugestão via modal'
-            ].join('\n'))
-            .setTimestamp();
+    // Verificar se a mensagem começa com o prefixo
+    if (!message.content.startsWith(PREFIX)) return;
+    
+    // Extrair comando e argumentos
+    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+    const commandName = args.shift().toLowerCase();
+    
+    // Verificar cooldown
+    if (prefixCooldowns.has(message.author.id)) {
+        const cooldownExpiration = prefixCooldowns.get(message.author.id);
+        if (Date.now() < cooldownExpiration) {
+            const timeLeft = (cooldownExpiration - Date.now()) / 1000;
+            return message.reply({
+                embeds: [createErrorEmbed(`Aguarde ${timeLeft.toFixed(1)} segundos antes de usar outro comando.`)]
+            });
+        }
+    }
+    
+    // Aplicar cooldown
+    prefixCooldowns.set(message.author.id, Date.now() + COOLDOWN_TIME);
+    setTimeout(() => prefixCooldowns.delete(message.author.id), COOLDOWN_TIME);
+    
+    // ============================================
+    // COMANDO: !help / !ajuda / !comandos
+    // ============================================
+    if (commandName === 'help' || commandName === 'ajuda' || commandName === 'comandos') {
+        const helpEmbed = createEmbed(
+            '📚 Comandos do InsightBot',
+            'Aqui estão todos os comandos disponíveis com o prefixo `!`',
+            '#5865F2',
+            [
+                {
+                    name: '📌 Comandos Gerais',
+                    value: '`!help` - Mostra esta mensagem\n`!ping` - Verifica a latência\n`!info` - Informações do bot\n`!invite` - Link para convidar\n`!support` - Informações de suporte',
+                    inline: false
+                },
+                {
+                    name: '💡 Comandos de Sugestão',
+                    value: '`!suggest [texto]` - Envia uma sugestão\n`!mysuggestions` - Ver suas sugestões\n`!topsuggestions` - Sugestões mais votadas\n`!suggestioninfo [id]` - Info de uma sugestão',
+                    inline: false
+                },
+                {
+                    name: '📊 Comandos de Estatísticas',
+                    value: '`!stats` - Estatísticas gerais\n`!serverstats` - Estatísticas do servidor\n`!userstats [@user]` - Estatísticas de um usuário',
+                    inline: false
+                },
+                {
+                    name: '⚙️ Comandos de Configuração (Apenas Owner)',
+                    value: '`!setup` - Guia de configuração\n`!config` - Ver configurações atuais\n`!resetconfig` - Resetar configurações',
+                    inline: false
+                },
+                {
+                    name: '🎮 Comandos Diversos',
+                    value: '`!avatar [@user]` - Mostra avatar\n`!userinfo [@user]` - Info do usuário\n`!serverinfo` - Info do servidor\n`!botinfo` - Info do bot',
+                    inline: false
+                },
+                {
+                    name: '🔧 Comandos Slash',
+                    value: '`/suggestions` - Configurar canal de sugestões\n`/suggestionschannel` - Configurar canal de recebimento',
+                    inline: false
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [helpEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !ping
+    // ============================================
+    if (commandName === 'ping') {
+        const sent = await message.reply({ content: '🏓 Pong! Calculando...' });
+        
+        const pingEmbed = createEmbed(
+            '🏓 Pong!',
+            `**Latência da API:** ${client.ws.ping}ms\n**Latência da Mensagem:** ${sent.createdTimestamp - message.createdTimestamp}ms`,
+            '#00FF00'
+        );
+        
+        return sent.edit({ content: null, embeds: [pingEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !info / !botinfo
+    // ============================================
+    if (commandName === 'info' || commandName === 'botinfo') {
+        const infoEmbed = createEmbed(
+            '🤖 InsightBot - Informações',
+            'Bot de sugestões inteligente para Discord',
+            '#5865F2',
+            [
+                {
+                    name: '📊 Estatísticas',
+                    value: `**Servidores:** ${client.guilds.cache.size}\n**Usuários:** ${client.users.cache.size}\n**Canais:** ${client.channels.cache.size}`,
+                    inline: true
+                },
+                {
+                    name: '⚙️ Versão',
+                    value: `**Bot:** 1.0.0\n**Discord.js:** v14\n**Node.js:** ${process.version}`,
+                    inline: true
+                },
+                {
+                    name: '🕐 Uptime',
+                    value: `<t:${Math.floor((Date.now() - client.uptime) / 1000)}:R>`,
+                    inline: true
+                },
+                {
+                    name: '👑 Desenvolvedor',
+                    value: `<@${OWNER_ID}>`,
+                    inline: true
+                },
+                {
+                    name: '📋 Comandos',
+                    value: 'Use `!help` para ver todos os comandos disponíveis',
+                    inline: false
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [infoEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !invite / !convite
+    // ============================================
+    if (commandName === 'invite' || commandName === 'convite') {
+        const inviteEmbed = createEmbed(
+            '🔗 Convite do Bot',
+            'Convide o InsightBot para seu servidor!',
+            '#5865F2',
+            [
+                {
+                    name: '🤖 Link de Convite',
+                    value: '[Clique aqui para convidar](https://discord.com/oauth2/authorize?client_id=SEU_CLIENT_ID&scope=bot&permissions=8)',
+                    inline: false
+                },
+                {
+                    name: '⚠️ Permissões Necessárias',
+                    value: 'Administrador (recomendado para funcionamento completo)',
+                    inline: false
+                },
+                {
+                    name: '📋 Permissões Mínimas',
+                    value: 'Gerenciar Mensagens, Enviar Mensagens, Adicionar Reações, Ler Histórico',
+                    inline: false
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [inviteEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !support / !suporte
+    // ============================================
+    if (commandName === 'support' || commandName === 'suporte') {
+        const supportEmbed = createEmbed(
+            '🆘 Suporte InsightBot',
+            'Precisa de ajuda? Entre em contato!',
+            '#5865F2',
+            [
+                {
+                    name: '👑 Desenvolvedor',
+                    value: `<@${OWNER_ID}>`,
+                    inline: true
+                },
+                {
+                    name: '📧 Contato',
+                    value: 'Envie uma DM para suporte',
+                    inline: true
+                },
+                {
+                    name: '💡 Sugestões',
+                    value: 'Use `!suggest` para enviar sugestões',
+                    inline: true
+                },
+                {
+                    name: '📚 Documentação',
+                    value: 'Use `!help` para ver todos os comandos',
+                    inline: true
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [supportEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !avatar
+    // ============================================
+    if (commandName === 'avatar') {
+        const user = message.mentions.users.first() || message.author;
+        
+        const avatarEmbed = createEmbed(
+            `🖼️ Avatar de ${user.username}`,
+            `Clique [aqui](${user.displayAvatarURL({ dynamic: true, size: 4096 })}) para baixar`,
+            '#5865F2'
+        ).setImage(user.displayAvatarURL({ dynamic: true, size: 4096 }));
+        
+        return message.reply({ embeds: [avatarEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !userinfo
+    // ============================================
+    if (commandName === 'userinfo') {
+        const user = message.mentions.users.first() || message.author;
+        const member = message.guild.members.cache.get(user.id);
+        
+        const userInfoEmbed = createEmbed(
+            `👤 Informações de ${user.username}`,
+            `Aqui estão as informações do usuário:`,
+            '#5865F2',
+            [
+                {
+                    name: '📝 Nome',
+                    value: `${user.tag}`,
+                    inline: true
+                },
+                {
+                    name: '🆔 ID',
+                    value: user.id,
+                    inline: true
+                },
+                {
+                    name: '📅 Conta criada em',
+                    value: formatDate(user.createdAt),
+                    inline: true
+                },
+                {
+                    name: '📥 Entrou no servidor em',
+                    value: member ? formatDate(member.joinedAt) : 'Não disponível',
+                    inline: true
+                },
+                {
+                    name: '🎨 Cargos',
+                    value: member ? `${member.roles.cache.size - 1} cargos` : 'Não disponível',
+                    inline: true
+                },
+                {
+                    name: '👑 Dono do Servidor',
+                    value: member && member.id === message.guild.ownerId ? 'Sim' : 'Não',
+                    inline: true
+                }
+            ]
+        ).setThumbnail(user.displayAvatarURL({ dynamic: true }));
+        
+        return message.reply({ embeds: [userInfoEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !serverinfo
+    // ============================================
+    if (commandName === 'serverinfo') {
+        const guild = message.guild;
+        
+        const serverInfoEmbed = createEmbed(
+            `📊 Informações de ${guild.name}`,
+            'Informações detalhadas do servidor',
+            '#5865F2',
+            [
+                {
+                    name: '👑 Dono',
+                    value: `<@${guild.ownerId}>`,
+                    inline: true
+                },
+                {
+                    name: '🆔 ID',
+                    value: guild.id,
+                    inline: true
+                },
+                {
+                    name: '📅 Criado em',
+                    value: formatDate(guild.createdAt),
+                    inline: true
+                },
+                {
+                    name: '👥 Membros',
+                    value: `${guild.memberCount}`,
+                    inline: true
+                },
+                {
+                    name: '💬 Canais',
+                    value: `${guild.channels.cache.size}`,
+                    inline: true
+                },
+                {
+                    name: '🎨 Cargos',
+                    value: `${guild.roles.cache.size}`,
+                    inline: true
+                },
+                {
+                    name: '😊 Emojis',
+                    value: `${guild.emojis.cache.size}`,
+                    inline: true
+                },
+                {
+                    name: '🔰 Nível de Boost',
+                    value: `Nível ${guild.premiumTier}`,
+                    inline: true
+                },
+                {
+                    name: '🚀 Boosts',
+                    value: `${guild.premiumSubscriptionCount || 0}`,
+                    inline: true
+                }
+            ]
+        );
+        
+        if (guild.iconURL()) {
+            serverInfoEmbed.setThumbnail(guild.iconURL({ dynamic: true }));
+        }
+        
+        if (guild.bannerURL()) {
+            serverInfoEmbed.setImage(guild.bannerURL({ dynamic: true }));
+        }
+        
+        return message.reply({ embeds: [serverInfoEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !suggest / !sugestao / !sugerir
+    // ============================================
+    if (commandName === 'suggest' || commandName === 'sugestao' || commandName === 'sugerir') {
+        const guildId = message.guild.id;
+        const config = suggestionsConfig[guildId];
+        
+        if (!config || !config.suggestionsChannel) {
+            return message.reply({
+                embeds: [createErrorEmbed('O sistema de sugestões não está configurado neste servidor.')]
+            });
+        }
+        
+        const content = args.join(' ');
+        if (!content) {
+            return message.reply({
+                embeds: [createErrorEmbed('Por favor, escreva sua sugestão.\nExemplo: `!suggest Adicionar canal de música`')]
+            });
+        }
+        
+        if (content.length < 10) {
+            return message.reply({
+                embeds: [createErrorEmbed('Sua sugestão deve ter pelo menos 10 caracteres.')]
+            });
+        }
+        
+        if (content.length > 1000) {
+            return message.reply({
+                embeds: [createErrorEmbed('Sua sugestão não pode ter mais de 1000 caracteres.')]
+            });
+        }
+        
+        const suggestion = suggestionManager.addSuggestion(guildId, message.author.id, content);
+        
+        // Enviar para o canal de recebimento
+        const receiveChannel = message.guild.channels.cache.get(config.receiveChannel);
+        if (receiveChannel) {
+            const suggestionEmbed = createEmbed(
+                '💡 Nova Sugestão',
+                content,
+                '#5865F2',
+                [
+                    {
+                        name: '👤 Autor',
+                        value: `${message.author.tag} (${message.author.id})`,
+                        inline: true
+                    },
+                    {
+                        name: '📅 Data',
+                        value: formatDate(suggestion.timestamp),
+                        inline: true
+                    },
+                    {
+                        name: '🆔 ID da Sugestão',
+                        value: suggestion.id,
+                        inline: true
+                    }
+                ]
+            );
+            
+            const sentMessage = await receiveChannel.send({ embeds: [suggestionEmbed] });
+            await sentMessage.react('👍');
+            await sentMessage.react('👎');
+        }
+        
+        // Confirmar para o usuário
+        const confirmEmbed = createSuccessEmbed(
+            `Sua sugestão foi enviada com sucesso!\n\n**ID:** ${suggestion.id}\n**Sugestão:** ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`
+        );
+        
+        return message.reply({ embeds: [confirmEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !mysuggestions / !minhas
+    // ============================================
+    if (commandName === 'mysuggestions' || commandName === 'minhas') {
+        const guildId = message.guild.id;
+        const userSuggestions = suggestionManager.getUserSuggestions(guildId, message.author.id);
+        
+        if (!userSuggestions || userSuggestions.length === 0) {
+            return message.reply({
+                embeds: [createEmbed(
+                    '📝 Suas Sugestões',
+                    'Você ainda não enviou nenhuma sugestão.',
+                    '#5865F2'
+                )]
+            });
+        }
+        
+        const suggestionsList = userSuggestions
+            .slice(-10)
+            .reverse()
+            .map((sug, index) => {
+                return `**${index + 1}.** ${sug.content.substring(0, 50)}${sug.content.length > 50 ? '...' : ''}\n` +
+                       `📊 Votos: 👍 ${sug.votes.up} | 👎 ${sug.votes.down}\n` +
+                       `📅 ${formatDate(sug.timestamp)}\n` +
+                       `🆔 ID: ${sug.id}`;
+            })
+            .join('\n\n');
+        
+        const embed = createEmbed(
+            '📝 Suas Sugestões',
+            `Aqui estão suas últimas ${Math.min(userSuggestions.length, 10)} sugestões:`,
+            '#5865F2',
+            [
+                {
+                    name: '💡 Sugestões Enviadas',
+                    value: suggestionsList || 'Nenhuma sugestão encontrada',
+                    inline: false
+                },
+                {
+                    name: '📊 Total',
+                    value: `${userSuggestions.length} sugestões enviadas`,
+                    inline: true
+                }
+            ]
+        );
         
         return message.reply({ embeds: [embed] });
     }
     
-    // Comandos de prefixo
-    if (!message.content.startsWith(PREFIX)) return;
-    
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
-    
-    // Verificar comandos normais
-    if (prefixCommands[commandName]) {
-        Logger.command(message.author.tag, PREFIX + commandName, args.join(' '));
+    // ============================================
+    // COMANDO: !stats / !estatisticas
+    // ============================================
+    if (commandName === 'stats' || commandName === 'estatisticas') {
+        const guildId = message.guild.id;
+        const config = suggestionsConfig[guildId];
         
-        try {
-            await prefixCommands[commandName].execute(message, args);
-        } catch (error) {
-            Logger.error(`Erro no comando ${commandName}: ${error.message}`);
-            await message.reply('❌ Ocorreu um erro ao executar este comando!');
+        if (!config || !config.suggestionsChannel || !config.receiveChannel) {
+            return message.reply({
+                embeds: [createErrorEmbed('O sistema de sugestões não está configurado neste servidor.')]
+            });
         }
-        return;
+        
+        let totalSuggestions = 0;
+        let totalVotes = { up: 0, down: 0 };
+        const userSuggestions = suggestionManager.userSuggestions.get(guildId);
+        
+        if (userSuggestions) {
+            for (const suggestions of userSuggestions.values()) {
+                totalSuggestions += suggestions.length;
+                for (const sug of suggestions) {
+                    totalVotes.up += sug.votes.up;
+                    totalVotes.down += sug.votes.down;
+                }
+            }
+        }
+        
+        const statsEmbed = createEmbed(
+            '📊 Estatísticas de Sugestões',
+            `Estatísticas do sistema de sugestões em **${message.guild.name}**`,
+            '#5865F2',
+            [
+                {
+                    name: '💡 Total de Sugestões',
+                    value: `${totalSuggestions}`,
+                    inline: true
+                },
+                {
+                    name: '👥 Usuários Participantes',
+                    value: `${userSuggestions?.size || 0}`,
+                    inline: true
+                },
+                {
+                    name: '👍 Total de Votos Positivos',
+                    value: `${totalVotes.up}`,
+                    inline: true
+                },
+                {
+                    name: '👎 Total de Votos Negativos',
+                    value: `${totalVotes.down}`,
+                    inline: true
+                },
+                {
+                    name: '📨 Canal de Envio',
+                    value: config.suggestionsChannel ? `<#${config.suggestionsChannel}>` : 'Não configurado',
+                    inline: true
+                },
+                {
+                    name: '📋 Canal de Recebimento',
+                    value: config.receiveChannel ? `<#${config.receiveChannel}>` : 'Não configurado',
+                    inline: true
+                },
+                {
+                    name: '⚙️ Status',
+                    value: '✅ Sistema Ativo',
+                    inline: true
+                },
+                {
+                    name: '📅 Configurado em',
+                    value: config.configuredAt ? formatDate(config.configuredAt) : 'Desconhecido',
+                    inline: true
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [statsEmbed] });
     }
     
-    // Verificar comandos do owner
-    if (ownerCommands[commandName]) {
-        if (!PermissionManager.isOwner(message.author.id)) {
-            return message.reply('❌ Este comando é restrito ao desenvolvedor do bot!');
+    // ============================================
+    // COMANDO: !serverstats
+    // ============================================
+    if (commandName === 'serverstats') {
+        const guild = message.guild;
+        
+        const serverStatsEmbed = createEmbed(
+            `📊 Estatísticas de ${guild.name}`,
+            'Estatísticas detalhadas do servidor',
+            '#5865F2',
+            [
+                {
+                    name: '👥 Total de Membros',
+                    value: `${guild.memberCount}`,
+                    inline: true
+                },
+                {
+                    name: '🟢 Membros Online',
+                    value: `${guild.members.cache.filter(m => m.presence?.status === 'online').size}`,
+                    inline: true
+                },
+                {
+                    name: '🟡 Membros Ausentes',
+                    value: `${guild.members.cache.filter(m => m.presence?.status === 'idle').size}`,
+                    inline: true
+                },
+                {
+                    name: '🔴 Membros Ocupados',
+                    value: `${guild.members.cache.filter(m => m.presence?.status === 'dnd').size}`,
+                    inline: true
+                },
+                {
+                    name: '⚫ Membros Offline',
+                    value: `${guild.memberCount - guild.members.cache.filter(m => m.presence?.status !== 'offline').size}`,
+                    inline: true
+                },
+                {
+                    name: '🤖 Bots',
+                    value: `${guild.members.cache.filter(m => m.user.bot).size}`,
+                    inline: true
+                },
+                {
+                    name: '💬 Canais de Texto',
+                    value: `${guild.channels.cache.filter(c => c.type === ChannelType.GuildText).size}`,
+                    inline: true
+                },
+                {
+                    name: '🔊 Canais de Voz',
+                    value: `${guild.channels.cache.filter(c => c.type === ChannelType.GuildVoice).size}`,
+                    inline: true
+                },
+                {
+                    name: '📢 Canais de Anúncio',
+                    value: `${guild.channels.cache.filter(c => c.type === ChannelType.GuildAnnouncement).size}`,
+                    inline: true
+                },
+                {
+                    name: '🎨 Cargos',
+                    value: `${guild.roles.cache.size}`,
+                    inline: true
+                },
+                {
+                    name: '😊 Emojis',
+                    value: `${guild.emojis.cache.size}`,
+                    inline: true
+                },
+                {
+                    name: '🎫 Emojis Animados',
+                    value: `${guild.emojis.cache.filter(e => e.animated).size}`,
+                    inline: true
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [serverStatsEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !userstats
+    // ============================================
+    if (commandName === 'userstats') {
+        const user = message.mentions.users.first() || message.author;
+        const guildId = message.guild.id;
+        
+        const userSuggestions = suggestionManager.getUserSuggestions(guildId, user.id);
+        const suggestionCount = userSuggestions.length;
+        
+        let totalVotes = { up: 0, down: 0 };
+        for (const sug of userSuggestions) {
+            totalVotes.up += sug.votes.up;
+            totalVotes.down += sug.votes.down;
         }
         
-        Logger.command(message.author.tag, PREFIX + commandName + ' (OWNER)', args.join(' '));
+        const userStatsEmbed = createEmbed(
+            `📊 Estatísticas de ${user.username}`,
+            'Estatísticas de sugestões do usuário',
+            '#5865F2',
+            [
+                {
+                    name: '💡 Sugestões Enviadas',
+                    value: `${suggestionCount}`,
+                    inline: true
+                },
+                {
+                    name: '👍 Votos Positivos Recebidos',
+                    value: `${totalVotes.up}`,
+                    inline: true
+                },
+                {
+                    name: '👎 Votos Negativos Recebidos',
+                    value: `${totalVotes.down}`,
+                    inline: true
+                },
+                {
+                    name: '📊 Média de Votos por Sugestão',
+                    value: suggestionCount > 0 ? ((totalVotes.up + totalVotes.down) / suggestionCount).toFixed(2) : '0',
+                    inline: true
+                },
+                {
+                    name: '⭐ Taxa de Aprovação',
+                    value: suggestionCount > 0 ? `${((totalVotes.up / (totalVotes.up + totalVotes.down || 1)) * 100).toFixed(1)}%` : '0%',
+                    inline: true
+                }
+            ]
+        ).setThumbnail(user.displayAvatarURL({ dynamic: true }));
         
-        try {
-            await ownerCommands[commandName].execute(message, args);
-        } catch (error) {
-            Logger.error(`Erro no comando owner ${commandName}: ${error.message}`);
-            await message.reply('❌ Ocorreu um erro ao executar este comando!');
+        return message.reply({ embeds: [userStatsEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !topsuggestions / !top
+    // ============================================
+    if (commandName === 'topsuggestions' || commandName === 'top') {
+        const guildId = message.guild.id;
+        const allSuggestions = [];
+        
+        const userSuggestions = suggestionManager.userSuggestions.get(guildId);
+        if (userSuggestions) {
+            for (const suggestions of userSuggestions.values()) {
+                allSuggestions.push(...suggestions);
+            }
         }
-        return;
+        
+        if (allSuggestions.length === 0) {
+            return message.reply({
+                embeds: [createEmbed(
+                    '🏆 Top Sugestões',
+                    'Nenhuma sugestão foi enviada ainda.',
+                    '#5865F2'
+                )]
+            });
+        }
+        
+        const topSuggestions = allSuggestions
+            .sort((a, b) => (b.votes.up - b.votes.down) - (a.votes.up - a.votes.down))
+            .slice(0, 10);
+        
+        const topList = topSuggestions.map((sug, index) => {
+            return `**${index + 1}.** ${sug.content.substring(0, 40)}${sug.content.length > 40 ? '...' : ''}\n` +
+                   `👍 ${sug.votes.up} | 👎 ${sug.votes.down} | 📊 Score: ${sug.votes.up - sug.votes.down}\n` +
+                   `👤 <@${sug.userId}> | 🆔 ${sug.id}`;
+        }).join('\n\n');
+        
+        const topEmbed = createEmbed(
+            '🏆 Top 10 Sugestões',
+            'Sugestões mais bem votadas do servidor',
+            '#FFD700',
+            [
+                {
+                    name: '📊 Ranking',
+                    value: topList || 'Nenhuma sugestão',
+                    inline: false
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [topEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !suggestioninfo
+    // ============================================
+    if (commandName === 'suggestioninfo') {
+        const suggestionId = args[0];
+        
+        if (!suggestionId) {
+            return message.reply({
+                embeds: [createErrorEmbed('Por favor, forneça o ID da sugestão.\nExemplo: `!suggestioninfo abc123xyz`')]
+            });
+        }
+        
+        const guildId = message.guild.id;
+        const suggestion = suggestionManager.getSuggestion(guildId, suggestionId);
+        
+        if (!suggestion) {
+            return message.reply({
+                embeds: [createErrorEmbed('Sugestão não encontrada. Verifique o ID.')]
+            });
+        }
+        
+        const suggestionInfoEmbed = createEmbed(
+            '📋 Informações da Sugestão',
+            suggestion.content,
+            '#5865F2',
+            [
+                {
+                    name: '🆔 ID',
+                    value: suggestion.id,
+                    inline: true
+                },
+                {
+                    name: '👤 Autor',
+                    value: `<@${suggestion.userId}>`,
+                    inline: true
+                },
+                {
+                    name: '📅 Data',
+                    value: formatDate(suggestion.timestamp),
+                    inline: true
+                },
+                {
+                    name: '📊 Votos',
+                    value: `👍 ${suggestion.votes.up} | 👎 ${suggestion.votes.down}`,
+                    inline: true
+                },
+                {
+                    name: '⭐ Score',
+                    value: `${suggestion.votes.up - suggestion.votes.down}`,
+                    inline: true
+                },
+                {
+                    name: '👥 Total de Votantes',
+                    value: `${suggestion.voters.size}`,
+                    inline: true
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [suggestionInfoEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !setup
+    // ============================================
+    if (commandName === 'setup') {
+        const setupEmbed = createEmbed(
+            '⚙️ Configuração do Sistema de Sugestões',
+            'Siga os passos abaixo para configurar o sistema:',
+            '#5865F2',
+            [
+                {
+                    name: '1️⃣ Configurar Canal de Sugestões',
+                    value: 'Use `/suggestions #canal` para definir o canal onde os usuários poderão enviar sugestões.',
+                    inline: false
+                },
+                {
+                    name: '2️⃣ Configurar Canal de Recebimento',
+                    value: 'Use `/suggestionschannel #canal` para definir o canal onde as sugestões serão enviadas.',
+                    inline: false
+                },
+                {
+                    name: '3️⃣ Permissões',
+                    value: 'Apenas o dono do bot (OWNER_ID) pode usar os comandos de configuração.',
+                    inline: false
+                },
+                {
+                    name: '4️⃣ Comandos',
+                    value: 'Após configurado, os usuários poderão usar `!suggest` para enviar sugestões.',
+                    inline: false
+                },
+                {
+                    name: '5️⃣ Votação',
+                    value: 'As sugestões receberão automaticamente reações 👍 e 👎 para votação.',
+                    inline: false
+                },
+                {
+                    name: '📌 Status Atual',
+                    value: suggestionsConfig[message.guild.id] ? '✅ Sistema configurado' : '❌ Sistema não configurado',
+                    inline: false
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [setupEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !config
+    // ============================================
+    if (commandName === 'config') {
+        const guildId = message.guild.id;
+        const config = suggestionsConfig[guildId];
+        
+        if (!config) {
+            return message.reply({
+                embeds: [createEmbed(
+                    '⚙️ Configurações Atuais',
+                    'O sistema de sugestões não está configurado neste servidor.\nUse `!setup` para ver como configurar.',
+                    '#5865F2'
+                )]
+            });
+        }
+        
+        const configEmbed = createEmbed(
+            '⚙️ Configurações Atuais',
+            'Aqui estão as configurações do sistema de sugestões:',
+            '#5865F2',
+            [
+                {
+                    name: '📨 Canal de Sugestões',
+                    value: config.suggestionsChannel ? `<#${config.suggestionsChannel}>` : 'Não configurado',
+                    inline: true
+                },
+                {
+                    name: '📋 Canal de Recebimento',
+                    value: config.receiveChannel ? `<#${config.receiveChannel}>` : 'Não configurado',
+                    inline: true
+                },
+                {
+                    name: '📅 Configurado em',
+                    value: config.configuredAt ? formatDate(config.configuredAt) : 'Desconhecido',
+                    inline: true
+                },
+                {
+                    name: '⚙️ Status',
+                    value: config.suggestionsChannel && config.receiveChannel ? '✅ Completo' : '⚠️ Incompleto',
+                    inline: true
+                }
+            ]
+        );
+        
+        return message.reply({ embeds: [configEmbed] });
+    }
+    
+    // ============================================
+    // COMANDO: !resetconfig (Apenas Owner)
+    // ============================================
+    if (commandName === 'resetconfig') {
+        if (!isOwner(message.author.id)) {
+            return message.reply({
+                embeds: [createErrorEmbed('Apenas o dono do bot pode usar este comando.')]
+            });
+        }
+        
+        const guildId = message.guild.id;
+        
+        if (suggestionsConfig[guildId]) {
+            delete suggestionsConfig[guildId];
+            saveConfig();
+            
+            return message.reply({
+                embeds: [createSuccessEmbed('Configurações do sistema de sugestões foram resetadas com sucesso!')]
+            });
+        } else {
+            return message.reply({
+                embeds: [createErrorEmbed('Não há configurações para resetar neste servidor.')]
+            });
+        }
+    }
+    
+    // ============================================
+    // COMANDO DESCONHECIDO
+    // ============================================
+    const validCommands = [
+        'help', 'ajuda', 'comandos', 'ping', 'info', 'botinfo', 'invite', 'convite',
+        'support', 'suporte', 'avatar', 'userinfo', 'serverinfo', 'suggest', 'sugestao',
+        'sugerir', 'mysuggestions', 'minhas', 'stats', 'estatisticas', 'serverstats',
+        'userstats', 'topsuggestions', 'top', 'suggestioninfo', 'setup', 'config', 'resetconfig'
+    ];
+    
+    if (!validCommands.includes(commandName)) {
+        return message.reply({
+            embeds: [createErrorEmbed(`Comando desconhecido. Use \`!help\` para ver todos os comandos disponíveis.`)]
+        });
     }
 });
 
-client.on(Events.GuildCreate, async guild => {
-    Logger.success(`Bot adicionado ao servidor: ${guild.name} (${guild.id})`);
+// ============================================
+// COMANDOS SLASH (APENAS OS 2 SOLICITADOS)
+// ============================================
+
+client.on(Events.InteractionCreate, async (interaction) => {
+    // Verificar se é um comando slash
+    if (!interaction.isChatInputCommand()) return;
     
-    // Enviar mensagem de boas-vindas
-    const channel = guild.systemChannel || guild.channels.cache.find(c => c.type === ChannelType.GuildText);
+    const command = interaction.commandName;
+    
+    // Verificar permissões (apenas owner pode usar)
+    if (!isOwner(interaction.user.id)) {
+        return interaction.reply({
+            embeds: [createErrorEmbed('Apenas o dono do bot pode usar este comando.')],
+            ephemeral: true
+        });
+    }
+    
+    // ============================================
+    // COMANDO SLASH: /suggestions
+    // ============================================
+    if (command === 'suggestions') {
+        const channel = interaction.options.getChannel('channel');
+        
+        if (channel.type !== ChannelType.GuildText) {
+            return interaction.reply({
+                embeds: [createErrorEmbed('Por favor, selecione um canal de texto válido.')],
+                ephemeral: true
+            });
+        }
+        
+        // Salvar configuração
+        const guildId = interaction.guild.id;
+        if (!suggestionsConfig[guildId]) {
+            suggestionsConfig[guildId] = {};
+        }
+        suggestionsConfig[guildId].suggestionsChannel = channel.id;
+        suggestionsConfig[guildId].configuredAt = Date.now();
+        saveConfig();
+        
+        // Criar embed explicativo
+        const explanationEmbed = createEmbed(
+            '💡 Sistema de Sugestões - InsightBot',
+            'Bem-vindo ao sistema de sugestões! Veja como funciona:',
+            '#5865F2',
+            [
+                {
+                    name: '📝 Como enviar uma sugestão',
+                    value: 'Clique no botão "Enviar Sugestão" abaixo e preencha o formulário com sua ideia.',
+                    inline: false
+                },
+                {
+                    name: '👍 Sistema de Votação',
+                    value: 'Após enviada, sua sugestão será postada em um canal especial onde outros membros poderão votar usando 👍 ou 👎.',
+                    inline: false
+                },
+                {
+                    name: '📊 Regras',
+                    value: '• Sugestões devem ser construtivas\n• Respeite outros membros\n• Sem spam ou conteúdo impróprio\n• Mínimo de 10 caracteres',
+                    inline: false
+                },
+                {
+                    name: '🎯 Objetivo',
+                    value: 'Ajudar a melhorar o servidor com ideias da comunidade!',
+                    inline: false
+                },
+                {
+                    name: '⚡ Dica',
+                    value: 'Use `!suggest [sua sugestão]` para enviar sugestões diretamente também!',
+                    inline: false
+                },
+                {
+                    name: '📚 Comandos Disponíveis',
+                    value: '`!help` - Ver todos os comandos\n`!mysuggestions` - Ver suas sugestões\n`!stats` - Ver estatísticas',
+                    inline: false
+                }
+            ]
+        );
+        
+        // Criar botão
+        const button = new ButtonBuilder()
+            .setCustomId('send_suggestion')
+            .setLabel('Enviar Sugestão')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('💡');
+        
+        const row = new ActionRowBuilder().addComponents(button);
+        
+        // Enviar embed com botão
+        await channel.send({
+            embeds: [explanationEmbed],
+            components: [row]
+        });
+        
+        // Confirmar configuração
+        const confirmEmbed = createSuccessEmbed(
+            `Sistema de sugestões configurado com sucesso!\n\n` +
+            `**Canal de sugestões:** ${channel}\n` +
+            `**Canal de recebimento:** ${suggestionsConfig[guildId].receiveChannel ? `<#${suggestionsConfig[guildId].receiveChannel}>` : 'Não configurado'}`
+        );
+        
+        return interaction.reply({
+            embeds: [confirmEmbed],
+            ephemeral: true
+        });
+    }
+    
+    // ============================================
+    // COMANDO SLASH: /suggestionschannel
+    // ============================================
+    if (command === 'suggestionschannel') {
+        const channel = interaction.options.getChannel('channel');
+        
+        if (channel.type !== ChannelType.GuildText) {
+            return interaction.reply({
+                embeds: [createErrorEmbed('Por favor, selecione um canal de texto válido.')],
+                ephemeral: true
+            });
+        }
+        
+        // Salvar configuração
+        const guildId = interaction.guild.id;
+        if (!suggestionsConfig[guildId]) {
+            suggestionsConfig[guildId] = {};
+        }
+        suggestionsConfig[guildId].receiveChannel = channel.id;
+        suggestionsConfig[guildId].configuredAt = Date.now();
+        saveConfig();
+        
+        // Enviar mensagem de teste
+        const testEmbed = createEmbed(
+            '📋 Canal de Sugestões Configurado',
+            'Este canal receberá todas as sugestões enviadas pelos membros.',
+            '#00FF00',
+            [
+                {
+                    name: '📊 Como funciona',
+                    value: 'As sugestões serão postadas aqui automaticamente com reações para votação.',
+                    inline: false
+                },
+                {
+                    name: '👍 Votação',
+                    value: 'Membros podem votar usando as reações 👍 (positivo) e 👎 (negativo).',
+                    inline: false
+                },
+                {
+                    name: '⚙️ Configuração',
+                    value: `Canal configurado por <@${interaction.user.id}>`,
+                    inline: false
+                },
+                {
+                    name: '📌 Status',
+                    value: suggestionsConfig[guildId].suggestionsChannel ? '✅ Sistema completo' : '⚠️ Configure também o canal de sugestões com `/suggestions`',
+                    inline: false
+                }
+            ]
+        );
+        
+        await channel.send({ embeds: [testEmbed] });
+        
+        // Confirmar configuração
+        const confirmEmbed = createSuccessEmbed(
+            `Canal de recebimento configurado com sucesso!\n\n` +
+            `**Canal de sugestões:** ${suggestionsConfig[guildId].suggestionsChannel ? `<#${suggestionsConfig[guildId].suggestionsChannel}>` : 'Não configurado'}\n` +
+            `**Canal de recebimento:** ${channel}`
+        );
+        
+        return interaction.reply({
+            embeds: [confirmEmbed],
+            ephemeral: true
+        });
+    }
+});
+
+// Handler para botões
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isButton()) return;
+    
+    if (interaction.customId === 'send_suggestion') {
+        // Criar modal para sugestão
+        const modal = new ModalBuilder()
+            .setCustomId('suggestion_modal')
+            .setTitle('Enviar Sugestão');
+        
+        const suggestionInput = new TextInputBuilder()
+            .setCustomId('suggestion_content')
+            .setLabel('Sua sugestão')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Descreva sua sugestão em detalhes...')
+            .setMinLength(10)
+            .setMaxLength(1000)
+            .setRequired(true);
+        
+        const firstRow = new ActionRowBuilder().addComponents(suggestionInput);
+        modal.addComponents(firstRow);
+        
+        return interaction.showModal(modal);
+    }
+});
+
+// Handler para modals
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isModalSubmit()) return;
+    
+    if (interaction.customId === 'suggestion_modal') {
+        const content = interaction.fields.getTextInputValue('suggestion_content');
+        const guildId = interaction.guild.id;
+        const config = suggestionsConfig[guildId];
+        
+        if (!config || !config.receiveChannel) {
+            return interaction.reply({
+                embeds: [createErrorEmbed('Erro na configuração do sistema. Contate um administrador.')],
+                ephemeral: true
+            });
+        }
+        
+        const suggestion = suggestionManager.addSuggestion(guildId, interaction.user.id, content);
+        
+        // Enviar para o canal de recebimento
+        const receiveChannel = interaction.guild.channels.cache.get(config.receiveChannel);
+        if (receiveChannel) {
+            const suggestionEmbed = createEmbed(
+                '💡 Nova Sugestão',
+                content,
+                '#5865F2',
+                [
+                    {
+                        name: '👤 Autor',
+                        value: `${interaction.user.tag} (${interaction.user.id})`,
+                        inline: true
+                    },
+                    {
+                        name: '📅 Data',
+                        value: formatDate(suggestion.timestamp),
+                        inline: true
+                    },
+                    {
+                        name: '🆔 ID da Sugestão',
+                        value: suggestion.id,
+                        inline: true
+                    }
+                ]
+            );
+            
+            const sentMessage = await receiveChannel.send({ embeds: [suggestionEmbed] });
+            await sentMessage.react('👍');
+            await sentMessage.react('👎');
+        }
+        
+        // Confirmar para o usuário
+        const confirmEmbed = createSuccessEmbed(
+            `Sua sugestão foi enviada com sucesso!\n\n**ID:** ${suggestion.id}\n**Sugestão:** ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`
+        );
+        
+        return interaction.reply({
+            embeds: [confirmEmbed],
+            ephemeral: true
+        });
+    }
+});
+
+// ============================================
+// EVENTOS DO BOT
+// ============================================
+
+client.once(Events.ClientReady, async () => {
+    console.log('============================================');
+    console.log(`🤖 ${client.user.tag} está online!`);
+    console.log(`📊 Servidores: ${client.guilds.cache.size}`);
+    console.log(`👥 Usuários: ${client.users.cache.size}`);
+    console.log(`📡 Ping: ${client.ws.ping}ms`);
+    console.log('============================================');
+    
+    // Configurar status
+    client.user.setPresence({
+        activities: [{ 
+            name: '!help para comandos', 
+            type: ActivityType.Watching 
+        }],
+        status: PresenceUpdateStatus.Online
+    });
+    
+    // Registrar APENAS os 2 comandos slash solicitados
+    const commands = [
+        {
+            name: 'suggestions',
+            description: 'Configura o canal de sugestões (apenas owner)',
+            options: [
+                {
+                    name: 'channel',
+                    description: 'Canal onde o embed de sugestões será enviado',
+                    type: 7, // CHANNEL
+                    required: true,
+                    channel_types: [0] // GUILD_TEXT
+                }
+            ]
+        },
+        {
+            name: 'suggestionschannel',
+            description: 'Configura o canal de recebimento de sugestões (apenas owner)',
+            options: [
+                {
+                    name: 'channel',
+                    description: 'Canal onde as sugestões serão enviadas',
+                    type: 7, // CHANNEL
+                    required: true,
+                    channel_types: [0] // GUILD_TEXT
+                }
+            ]
+        }
+    ];
+    
+    try {
+        console.log('📝 Registrando comandos slash...');
+        
+        // Registrar comandos globalmente
+        await client.application.commands.set(commands);
+        
+        console.log('✅ Comandos slash registrados com sucesso!');
+        console.log('📋 Comandos registrados: /suggestions, /suggestionschannel');
+    } catch (error) {
+        console.error('❌ Erro ao registrar comandos slash:', error);
+    }
+    
+    // Enviar mensagem de inicialização
+    await sendStartupMessage();
+    
+    // Atualizar status periodicamente
+    setInterval(() => {
+        const statuses = [
+            { name: '💡 !help', type: ActivityType.Watching },
+            { name: `${client.guilds.cache.size} servidores`, type: ActivityType.Watching },
+            { name: '!suggest', type: ActivityType.Listening },
+            { name: '🚀 InsightBot v1.0', type: ActivityType.Playing },
+            { name: '📊 !stats', type: ActivityType.Watching }
+        ];
+        
+        const randomStatus = statuses[Math.floor(Math.random() * statuses.length)];
+        
+        client.user.setPresence({
+            activities: [{ name: randomStatus.name, type: randomStatus.type }],
+            status: PresenceUpdateStatus.Online
+        });
+    }, 30000); // Atualizar a cada 30 segundos
+});
+
+// Evento quando o bot entra em um novo servidor
+client.on(Events.GuildCreate, async (guild) => {
+    console.log(`🎉 Entrou no servidor: ${guild.name} (${guild.id})`);
+    
+    // Procurar canal para enviar mensagem de boas-vindas
+    const channel = guild.systemChannel || 
+                   guild.channels.cache.find(ch => 
+                       ch.type === ChannelType.GuildText && 
+                       ch.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages)
+                   );
+    
     if (channel) {
-        const embed = EmbedBuilder.welcomeEmbed(guild);
-        await channel.send({ embeds: [embed] });
+        const welcomeEmbed = createEmbed(
+            '🎉 InsightBot Chegou!',
+            'Obrigado por me adicionar ao seu servidor!',
+            '#5865F2',
+            [
+                {
+                    name: '🚀 Começando',
+                    value: 'Use `!help` para ver todos os comandos disponíveis.',
+                    inline: false
+                },
+                {
+                    name: '⚙️ Configuração',
+                    value: 'Para configurar o sistema de sugestões, use:\n`/suggestions #canal` - Define o canal de sugestões\n`/suggestionschannel #canal` - Define o canal de recebimento',
+                    inline: false
+                },
+                {
+                    name: '📌 Nota',
+                    value: 'Apenas o dono do bot pode usar comandos de configuração.',
+                    inline: false
+                },
+                {
+                    name: '💡 Dica',
+                    value: 'Use `!setup` para ver um guia completo de configuração!',
+                    inline: false
+                }
+            ]
+        );
+        
+        await channel.send({ embeds: [welcomeEmbed] });
     }
 });
 
-client.on(Events.GuildDelete, async guild => {
-    Logger.warn(`Bot removido do servidor: ${guild.name} (${guild.id})`);
+// Evento quando o bot é removido de um servidor
+client.on(Events.GuildDelete, (guild) => {
+    console.log(`👋 Removido do servidor: ${guild.name} (${guild.id})`);
     
-    // Limpar configurações
-    client.suggestionsConfig.delete(guild.id);
-    client.suggestionsCount.delete(guild.id);
-    configManager.saveConfig();
+    // Limpar configurações do servidor
+    if (suggestionsConfig[guild.id]) {
+        delete suggestionsConfig[guild.id];
+        saveConfig();
+        console.log(`🧹 Configurações removidas para o servidor ${guild.name}`);
+    }
 });
 
-client.on(Events.Error, error => {
-    Logger.error(`Erro no cliente Discord: ${error.message}`);
+// Evento para reações em mensagens
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+    // Ignorar reações do próprio bot
+    if (user.bot) return;
+    
+    // Verificar se é uma mensagem de sugestão
+    if (reaction.message.embeds.length > 0) {
+        const embed = reaction.message.embeds[0];
+        if (embed.title === '💡 Nova Sugestão' || embed.title?.includes('Sugestão')) {
+            // Apenas permitir 👍 e 👎
+            if (!['👍', '👎'].includes(reaction.emoji.name)) {
+                await reaction.users.remove(user.id);
+            }
+        }
+    }
 });
 
-client.on(Events.Warn, warning => {
-    Logger.warn(`Aviso do Discord: ${warning}`);
+// Tratamento de erros
+process.on('unhandledRejection', (error) => {
+    console.error('❌ Erro não tratado (Promise):', error);
 });
 
-// Tratamento de erros não capturados
-process.on('unhandledRejection', error => {
-    Logger.error(`Erro não tratado (Promise): ${error.message}`);
-    if (error.stack) Logger.debug(error.stack);
+process.on('uncaughtException', (error) => {
+    console.error('❌ Erro não tratado (Exception):', error);
 });
 
-process.on('uncaughtException', error => {
-    Logger.error(`Erro não capturado: ${error.message}`);
-    if (error.stack) Logger.debug(error.stack);
+// Evento para erros do Discord
+client.on(Events.Error, (error) => {
+    console.error('❌ Erro no cliente Discord:', error);
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-    Logger.warn('Recebido sinal SIGINT. Fechando conexões...');
-    configManager.saveConfig();
-    await client.destroy();
-    process.exit(0);
+client.on(Events.ShardError, (error) => {
+    console.error('❌ Erro no shard:', error);
 });
 
-process.on('SIGTERM', async () => {
-    Logger.warn('Recebido sinal SIGTERM. Fechando conexões...');
-    configManager.saveConfig();
-    await client.destroy();
-    process.exit(0);
+// Evento de warning
+client.on(Events.Warn, (warning) => {
+    console.warn('⚠️ Warning:', warning);
 });
 
-// ============================================
-// INICIALIZAÇÃO DO BOT
-// ============================================
-
-// Inicializar collections
-for (const [name, cmd] of Object.entries(prefixCommands)) {
-    client.prefixCommands.set(name, cmd);
+// Evento de debug (apenas em desenvolvimento)
+if (process.env.NODE_ENV === 'development') {
+    client.on(Events.Debug, (info) => {
+        console.log('🐛 Debug:', info);
+    });
 }
 
-for (const cmd of slashCommands) {
-    client.slashCommands.set(cmd.data.name, cmd);
-}
+// ============================================
+// FUNÇÕES ADICIONAIS
+// ============================================
 
-Logger.info('='.repeat(50));
-Logger.info('🤖 Iniciando Bot de Sugestões...');
-Logger.info(`📝 Prefixo configurado: ${PREFIX}`);
-Logger.info(`👑 Owner ID: ${OWNER_ID}`);
-Logger.info('='.repeat(50));
+// Função para limpar cache periodicamente
+setInterval(() => {
+    // Limpar cooldowns antigos
+    const now = Date.now();
+    for (const [userId, timestamp] of prefixCooldowns) {
+        if (now > timestamp) {
+            prefixCooldowns.delete(userId);
+        }
+    }
+    
+    console.log('🧹 Cache limpo periodicamente');
+}, 3600000); // A cada 1 hora
 
-// Conectar ao Discord
+// Função para backup das configurações
+setInterval(() => {
+    saveConfig();
+    console.log('💾 Backup automático das configurações realizado');
+}, 1800000); // A cada 30 minutos
+
+// ============================================
+// INICIAR O BOT
+// ============================================
+
+console.log('🚀 Iniciando InsightBot...');
+console.log('============================================');
+console.log('📋 Comandos Slash: /suggestions, /suggestionschannel');
+console.log('📋 Comandos Prefixo: !help, !ping, !info, !suggest, etc.');
+console.log('============================================');
+
 client.login(TOKEN).catch(error => {
-    Logger.error(`Falha ao conectar ao Discord: ${error.message}`);
-    Logger.error('Verifique se o TOKEN no arquivo .env está correto!');
+    console.error('❌ Erro ao fazer login:', error);
+    console.error('Verifique se o TOKEN está correto no arquivo .env');
     process.exit(1);
 });
 
-// Exportar para uso em outros arquivos (se necessário)
+// ============================================
+// EXPORTAÇÕES PARA USO EM OUTROS ARQUIVOS
+// ============================================
+
 module.exports = {
     client,
-    configManager,
-    Logger,
-    Utils,
-    PermissionManager,
-    EmbedBuilder,
-    ComponentBuilder
+    suggestionManager,
+    suggestionsConfig,
+    saveConfig,
+    createEmbed,
+    createErrorEmbed,
+    createSuccessEmbed,
+    formatDate,
+    isOwner
 };
