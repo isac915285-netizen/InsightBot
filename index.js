@@ -24,6 +24,58 @@ const fs = require('fs');
 const path = require('path');
 
 // ============================================
+// CONFIGURAÇÃO DO HEARTBEAT (ADICIONADO)
+// ============================================
+const BOT_CONFIG = {
+    botId: 'insight',
+    token: process.env.INSIGHT_TOKEN || 'INSIGHT_TOKEN_123',
+    apiUrl: 'https://y2k-nat.up.railway.app/api/bot/heartbeat'
+};
+
+let totalComandosExecutados = 0;
+
+async function sendHeartbeat(client) {
+    try {
+        const uniqueUsers = new Set();
+        client.guilds.cache.forEach(g => {
+            g.members.cache.forEach(m => uniqueUsers.add(m.id));
+        });
+        
+        const data = {
+            botId: BOT_CONFIG.botId,
+            token: BOT_CONFIG.token,
+            status: client.isReady() ? 'online' : 'offline',
+            servidores: client.guilds.cache.size,
+            usuarios: uniqueUsers.size,
+            comandos: totalComandosExecutados,
+            ping: client.ws.ping,
+            uptime: formatUptime(client.uptime),
+            versao: '2.1.0'
+        };
+        
+        const res = await fetch(BOT_CONFIG.apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        if (res.ok) {
+            console.log('✅ Heartbeat enviado com sucesso!');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao enviar heartbeat:', error.message);
+    }
+}
+
+function formatUptime(ms) {
+    const d = Math.floor(ms / 86400000);
+    const h = Math.floor((ms % 86400000) / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return `${d}d ${h}h ${m}m`;
+}
+// ===== FIM DA CONFIGURAÇÃO DO HEARTBEAT =====
+
+// ============================================
 // CONFIGURAÇÕES INICIAIS
 // ============================================
 
@@ -316,6 +368,9 @@ client.on(Events.MessageCreate, async (message) => {
     
     // Verificar se a mensagem começa com o prefixo
     if (!message.content.startsWith(PREFIX)) return;
+    
+    // Incrementar contador de comandos (ADICIONADO)
+    totalComandosExecutados++;
     
     // Extrair comando e argumentos
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
@@ -1097,7 +1152,7 @@ client.on(Events.MessageCreate, async (message) => {
                 {
                     name: '5️⃣ Votação',
                     value: 'As sugestões receberão automaticamente reações 👍 e 👎 para votação.',
-                    inline: false
+                    inline:40
                 },
                 {
                     name: '📌 Status Atual',
@@ -1210,6 +1265,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     
     const command = interaction.commandName;
+    
+    // Incrementar contador de comandos (ADICIONADO)
+    totalComandosExecutados++;
     
     // Verificar permissões (apenas owner pode usar)
     if (!isOwner(interaction.user.id)) {
@@ -1380,6 +1438,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
     
     if (interaction.customId === 'send_suggestion') {
+        // Incrementar contador de comandos (ADICIONADO)
+        totalComandosExecutados++;
+        
         // Criar modal para sugestão
         const modal = new ModalBuilder()
             .setCustomId('suggestion_modal')
@@ -1406,6 +1467,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isModalSubmit()) return;
     
     if (interaction.customId === 'suggestion_modal') {
+        // Incrementar contador de comandos (ADICIONADO)
+        totalComandosExecutados++;
+        
         const content = interaction.fields.getTextInputValue('suggestion_content');
         const guildId = interaction.guild.id;
         const config = suggestionsConfig[guildId];
@@ -1463,6 +1527,11 @@ client.once(Events.ClientReady, async () => {
     console.log(`👥 Usuários: ${client.users.cache.size}`);
     console.log(`📡 Ping: ${client.ws.ping}ms`);
     console.log('============================================');
+    
+    // ===== HEARTBEAT (ADICIONADO) =====
+    sendHeartbeat(client);
+    setInterval(() => sendHeartbeat(client), 5 * 60 * 1000);
+    // ===== FIM HEARTBEAT =====
     
     // Configurar status
     client.user.setPresence({
@@ -1531,7 +1600,7 @@ client.once(Events.ClientReady, async () => {
             activities: [{ name: randomStatus.name, type: randomStatus.type }],
             status: PresenceUpdateStatus.Online
         });
-    }, 10000); // Atualizar a cada 30 segundos
+    }, 30000); // Atualizar a cada 30 segundos
 });
 
 // Evento quando o bot entra em um novo servidor
@@ -1668,6 +1737,7 @@ console.log('🚀 Iniciando InsightBot...');
 console.log('============================================');
 console.log('📋 Comandos Slash: /suggestions, /suggestionschannel');
 console.log('📋 Comandos Prefixo: !help, !ping, !info, !suggest, etc.');
+console.log('📡 Heartbeat configurado para: ' + BOT_CONFIG.apiUrl);
 console.log('============================================');
 
 client.login(TOKEN).catch(error => {
