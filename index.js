@@ -24,7 +24,7 @@ const fs = require('fs');
 const path = require('path');
 
 // ============================================
-// CONFIGURAÇÃO DO HEARTBEAT (ADICIONADO)
+// CONFIGURAÇÃO DO HEARTBEAT (COMPLETO)
 // ============================================
 const BOT_CONFIG = {
     botId: 'insight',
@@ -37,8 +37,13 @@ let totalComandosExecutados = 0;
 async function sendHeartbeat(client) {
     try {
         const uniqueUsers = new Set();
-        client.guilds.cache.forEach(g => {
-            g.members.cache.forEach(m => uniqueUsers.add(m.id));
+        const guildIds = [];
+        
+        client.guilds.cache.forEach(guild => {
+            guildIds.push(guild.id);
+            guild.members.cache.forEach(member => {
+                uniqueUsers.add(member.id);
+            });
         });
         
         const data = {
@@ -46,7 +51,9 @@ async function sendHeartbeat(client) {
             token: BOT_CONFIG.token,
             status: client.isReady() ? 'online' : 'offline',
             servidores: client.guilds.cache.size,
+            guildIds: guildIds,
             usuarios: uniqueUsers.size,
+            userIds: Array.from(uniqueUsers),
             comandos: totalComandosExecutados,
             ping: client.ws.ping,
             uptime: formatUptime(client.uptime),
@@ -60,7 +67,9 @@ async function sendHeartbeat(client) {
         });
         
         if (res.ok) {
-            console.log('✅ Heartbeat enviado com sucesso!');
+            console.log(`✅ Heartbeat enviado! Servidores: ${guildIds.length}, Usuários: ${uniqueUsers.size}, Comandos: ${totalComandosExecutados}`);
+        } else {
+            console.error('❌ Erro ao enviar heartbeat:', res.status);
         }
     } catch (error) {
         console.error('❌ Erro ao enviar heartbeat:', error.message);
@@ -217,20 +226,17 @@ function formatDate(date) {
 // Função para enviar mensagem de inicialização
 async function sendStartupMessage() {
     try {
-        // Aguardar o cliente estar pronto
         await new Promise(resolve => setTimeout(resolve, 5000));
         
         const guilds = client.guilds.cache;
         
         for (const [guildId, guild] of guilds) {
             try {
-                // Procurar canal chamado "geral"
                 let channel = guild.channels.cache.find(
                     ch => ch.name.toLowerCase() === 'geral' && 
                     ch.type === ChannelType.GuildText
                 );
                 
-                // Se não encontrar "geral", procurar "loginfo"
                 if (!channel) {
                     channel = guild.channels.cache.find(
                         ch => ch.name.toLowerCase() === 'loginfo' && 
@@ -238,7 +244,6 @@ async function sendStartupMessage() {
                     );
                 }
                 
-                // Se encontrou o canal, enviar mensagem
                 if (channel) {
                     const messages = [
                         `🌟 **InsightBot está online!** Use \`!help\` para ver todos os comandos disponíveis.`,
@@ -263,7 +268,6 @@ async function sendStartupMessage() {
                         `🟢 **Status:** Operacional | 🕐 **Horário:** ${new Date().toLocaleTimeString('pt-BR')}`
                     ];
                     
-                    // Enviar todas as mensagens formatadas
                     for (const msg of messages) {
                         await channel.send(msg);
                         await new Promise(resolve => setTimeout(resolve, 500));
@@ -356,27 +360,20 @@ const suggestionManager = new SuggestionManager();
 // COMANDOS COM PREFIXO (!)
 // ============================================
 
-// Cooldown para comandos com prefixo
 const prefixCooldowns = new Collection();
 const PREFIX = '!';
-const COOLDOWN_TIME = 3000; // 3 segundos
+const COOLDOWN_TIME = 3000;
 
-// Handler para comandos com prefixo
 client.on(Events.MessageCreate, async (message) => {
-    // Ignorar mensagens de bots
     if (message.author.bot) return;
-    
-    // Verificar se a mensagem começa com o prefixo
     if (!message.content.startsWith(PREFIX)) return;
     
-    // Incrementar contador de comandos (ADICIONADO)
+    // ===== INCREMENTAR CONTADOR =====
     totalComandosExecutados++;
     
-    // Extrair comando e argumentos
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const commandName = args.shift().toLowerCase();
     
-    // Verificar cooldown
     if (prefixCooldowns.has(message.author.id)) {
         const cooldownExpiration = prefixCooldowns.get(message.author.id);
         if (Date.now() < cooldownExpiration) {
@@ -387,7 +384,6 @@ client.on(Events.MessageCreate, async (message) => {
         }
     }
     
-    // Aplicar cooldown
     prefixCooldowns.set(message.author.id, Date.now() + COOLDOWN_TIME);
     setTimeout(() => prefixCooldowns.delete(message.author.id), COOLDOWN_TIME);
     
@@ -723,7 +719,6 @@ client.on(Events.MessageCreate, async (message) => {
         
         const suggestion = suggestionManager.addSuggestion(guildId, message.author.id, content);
         
-        // Enviar para o canal de recebimento
         const receiveChannel = message.guild.channels.cache.get(config.receiveChannel);
         if (receiveChannel) {
             const suggestionEmbed = createEmbed(
@@ -744,7 +739,6 @@ client.on(Events.MessageCreate, async (message) => {
             await sentMessage.react('👎');
         }
         
-        // Confirmar para o usuário
         const confirmEmbed = createSuccessEmbed(
             `Sua sugestão foi enviada com sucesso!\n\n**ID:** ${suggestion.id}\n**Sugestão:** ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`
         );
@@ -1152,7 +1146,7 @@ client.on(Events.MessageCreate, async (message) => {
                 {
                     name: '5️⃣ Votação',
                     value: 'As sugestões receberão automaticamente reações 👍 e 👎 para votação.',
-                    inline:40
+                    inline: false
                 },
                 {
                     name: '📌 Status Atual',
@@ -1261,15 +1255,13 @@ client.on(Events.MessageCreate, async (message) => {
 // ============================================
 
 client.on(Events.InteractionCreate, async (interaction) => {
-    // Verificar se é um comando slash
     if (!interaction.isChatInputCommand()) return;
     
     const command = interaction.commandName;
     
-    // Incrementar contador de comandos (ADICIONADO)
+    // ===== INCREMENTAR CONTADOR =====
     totalComandosExecutados++;
     
-    // Verificar permissões (apenas owner pode usar)
     if (!isOwner(interaction.user.id)) {
         return interaction.reply({
             embeds: [createErrorEmbed('Apenas o dono do bot pode usar este comando.')],
@@ -1290,7 +1282,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             });
         }
         
-        // Salvar configuração
         const guildId = interaction.guild.id;
         if (!suggestionsConfig[guildId]) {
             suggestionsConfig[guildId] = {};
@@ -1299,7 +1290,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         suggestionsConfig[guildId].configuredAt = Date.now();
         saveConfig();
         
-        // Criar embed explicativo
         const explanationEmbed = createEmbed(
             '💡 Sistema de Sugestões - InsightBot',
             'Bem-vindo ao sistema de sugestões! Veja como funciona:',
@@ -1338,7 +1328,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ]
         );
         
-        // Criar botão
         const button = new ButtonBuilder()
             .setCustomId('send_suggestion')
             .setLabel('Enviar Sugestão')
@@ -1347,13 +1336,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         
         const row = new ActionRowBuilder().addComponents(button);
         
-        // Enviar embed com botão
         await channel.send({
             embeds: [explanationEmbed],
             components: [row]
         });
         
-        // Confirmar configuração
         const confirmEmbed = createSuccessEmbed(
             `Sistema de sugestões configurado com sucesso!\n\n` +
             `**Canal de sugestões:** ${channel}\n` +
@@ -1379,7 +1366,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             });
         }
         
-        // Salvar configuração
         const guildId = interaction.guild.id;
         if (!suggestionsConfig[guildId]) {
             suggestionsConfig[guildId] = {};
@@ -1388,7 +1374,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         suggestionsConfig[guildId].configuredAt = Date.now();
         saveConfig();
         
-        // Enviar mensagem de teste
         const testEmbed = createEmbed(
             '📋 Canal de Sugestões Configurado',
             'Este canal receberá todas as sugestões enviadas pelos membros.',
@@ -1419,7 +1404,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         
         await channel.send({ embeds: [testEmbed] });
         
-        // Confirmar configuração
         const confirmEmbed = createSuccessEmbed(
             `Canal de recebimento configurado com sucesso!\n\n` +
             `**Canal de sugestões:** ${suggestionsConfig[guildId].suggestionsChannel ? `<#${suggestionsConfig[guildId].suggestionsChannel}>` : 'Não configurado'}\n` +
@@ -1438,10 +1422,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
     
     if (interaction.customId === 'send_suggestion') {
-        // Incrementar contador de comandos (ADICIONADO)
+        // ===== INCREMENTAR CONTADOR =====
         totalComandosExecutados++;
         
-        // Criar modal para sugestão
         const modal = new ModalBuilder()
             .setCustomId('suggestion_modal')
             .setTitle('Enviar Sugestão');
@@ -1467,7 +1450,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isModalSubmit()) return;
     
     if (interaction.customId === 'suggestion_modal') {
-        // Incrementar contador de comandos (ADICIONADO)
+        // ===== INCREMENTAR CONTADOR =====
         totalComandosExecutados++;
         
         const content = interaction.fields.getTextInputValue('suggestion_content');
@@ -1483,7 +1466,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         
         const suggestion = suggestionManager.addSuggestion(guildId, interaction.user.id, content);
         
-        // Enviar para o canal de recebimento
         const receiveChannel = interaction.guild.channels.cache.get(config.receiveChannel);
         if (receiveChannel) {
             const suggestionEmbed = createEmbed(
@@ -1504,7 +1486,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             await sentMessage.react('👎');
         }
         
-        // Confirmar para o usuário
         const confirmEmbed = createSuccessEmbed(
             `Sua sugestão foi enviada com sucesso!\n\n**ID:** ${suggestion.id}\n**Sugestão:** ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`
         );
@@ -1528,12 +1509,11 @@ client.once(Events.ClientReady, async () => {
     console.log(`📡 Ping: ${client.ws.ping}ms`);
     console.log('============================================');
     
-    // ===== HEARTBEAT (ADICIONADO) =====
+    // ===== HEARTBEAT =====
     sendHeartbeat(client);
     setInterval(() => sendHeartbeat(client), 5 * 60 * 1000);
     // ===== FIM HEARTBEAT =====
     
-    // Configurar status
     client.user.setPresence({
         activities: [{ 
             name: '!help para comandos', 
@@ -1542,7 +1522,6 @@ client.once(Events.ClientReady, async () => {
         status: PresenceUpdateStatus.Online
     });
     
-    // Registrar APENAS os 2 comandos slash solicitados
     const commands = [
         {
             name: 'suggestions',
@@ -1551,9 +1530,9 @@ client.once(Events.ClientReady, async () => {
                 {
                     name: 'channel',
                     description: 'Canal onde o embed de sugestões será enviado',
-                    type: 7, // CHANNEL
+                    type: 7,
                     required: true,
-                    channel_types: [0] // GUILD_TEXT
+                    channel_types: [0]
                 }
             ]
         },
@@ -1564,9 +1543,9 @@ client.once(Events.ClientReady, async () => {
                 {
                     name: 'channel',
                     description: 'Canal onde as sugestões serão enviadas',
-                    type: 7, // CHANNEL
+                    type: 7,
                     required: true,
-                    channel_types: [0] // GUILD_TEXT
+                    channel_types: [0]
                 }
             ]
         }
@@ -1574,20 +1553,15 @@ client.once(Events.ClientReady, async () => {
     
     try {
         console.log('📝 Registrando comandos slash...');
-        
-        // Registrar comandos globalmente
         await client.application.commands.set(commands);
-        
         console.log('✅ Comandos slash registrados com sucesso!');
         console.log('📋 Comandos registrados: /suggestions, /suggestionschannel');
     } catch (error) {
         console.error('❌ Erro ao registrar comandos slash:', error);
     }
     
-    // Enviar mensagem de inicialização
     await sendStartupMessage();
     
-    // Atualizar status periodicamente
     setInterval(() => {
         const statuses = [
             { name: '!help', type: ActivityType.Watching },
@@ -1600,14 +1574,13 @@ client.once(Events.ClientReady, async () => {
             activities: [{ name: randomStatus.name, type: randomStatus.type }],
             status: PresenceUpdateStatus.Online
         });
-    }, 30000); // Atualizar a cada 30 segundos
+    }, 30000);
 });
 
 // Evento quando o bot entra em um novo servidor
 client.on(Events.GuildCreate, async (guild) => {
     console.log(`🎉 Entrou no servidor: ${guild.name} (${guild.id})`);
     
-    // Procurar canal para enviar mensagem de boas-vindas
     const channel = guild.systemChannel || 
                    guild.channels.cache.find(ch => 
                        ch.type === ChannelType.GuildText && 
@@ -1651,7 +1624,6 @@ client.on(Events.GuildCreate, async (guild) => {
 client.on(Events.GuildDelete, (guild) => {
     console.log(`👋 Removido do servidor: ${guild.name} (${guild.id})`);
     
-    // Limpar configurações do servidor
     if (suggestionsConfig[guild.id]) {
         delete suggestionsConfig[guild.id];
         saveConfig();
@@ -1661,14 +1633,11 @@ client.on(Events.GuildDelete, (guild) => {
 
 // Evento para reações em mensagens
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
-    // Ignorar reações do próprio bot
     if (user.bot) return;
     
-    // Verificar se é uma mensagem de sugestão
     if (reaction.message.embeds.length > 0) {
         const embed = reaction.message.embeds[0];
         if (embed.title === '💡 Nova Sugestão' || embed.title?.includes('Sugestão')) {
-            // Apenas permitir 👍 e 👎
             if (!['👍', '👎'].includes(reaction.emoji.name)) {
                 await reaction.users.remove(user.id);
             }
@@ -1685,7 +1654,6 @@ process.on('uncaughtException', (error) => {
     console.error('❌ Erro não tratado (Exception):', error);
 });
 
-// Evento para erros do Discord
 client.on(Events.Error, (error) => {
     console.error('❌ Erro no cliente Discord:', error);
 });
@@ -1694,12 +1662,10 @@ client.on(Events.ShardError, (error) => {
     console.error('❌ Erro no shard:', error);
 });
 
-// Evento de warning
 client.on(Events.Warn, (warning) => {
     console.warn('⚠️ Warning:', warning);
 });
 
-// Evento de debug (apenas em desenvolvimento)
 if (process.env.NODE_ENV === 'development') {
     client.on(Events.Debug, (info) => {
         console.log('🐛 Debug:', info);
@@ -1710,24 +1676,20 @@ if (process.env.NODE_ENV === 'development') {
 // FUNÇÕES ADICIONAIS
 // ============================================
 
-// Função para limpar cache periodicamente
 setInterval(() => {
-    // Limpar cooldowns antigos
     const now = Date.now();
     for (const [userId, timestamp] of prefixCooldowns) {
         if (now > timestamp) {
             prefixCooldowns.delete(userId);
         }
     }
-    
     console.log('🧹 Cache limpo periodicamente');
-}, 3600000); // A cada 1 hora
+}, 3600000);
 
-// Função para backup das configurações
 setInterval(() => {
     saveConfig();
     console.log('💾 Backup automático das configurações realizado');
-}, 1800000); // A cada 30 minutos
+}, 1800000);
 
 // ============================================
 // INICIAR O BOT
@@ -1745,10 +1707,6 @@ client.login(TOKEN).catch(error => {
     console.error('Verifique se o TOKEN está correto no arquivo .env');
     process.exit(1);
 });
-
-// ============================================
-// EXPORTAÇÕES PARA USO EM OUTROS ARQUIVOS
-// ============================================
 
 module.exports = {
     client,
