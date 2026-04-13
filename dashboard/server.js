@@ -299,7 +299,7 @@ app.get('/api/dashboard/:guildId/stats', isAuthenticated, async (req, res) => {
     }
 });
 
-// API: Status do bot
+// API: Status do Bot
 app.get('/api/bot/status', async (req, res) => {
     try {
         const botPort = process.env.PORT || 3000;
