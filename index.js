@@ -1577,39 +1577,6 @@ apiApp.get('/api/guild/:guildId/stats', checkApiSecret, (req, res) => {
     });
 });
 
-// ============================================
-// HEALTH CHECK + INICIAR SERVIDORES
-// ============================================
-const UNIFIED_PORT = process.env.PORT || 8080;
-
-// Servidor principal (API + Health Check)
-const mainApp = express();
-mainApp.use(express.json());
-mainApp.use('/api', apiApp);
-
-mainApp.get('/health', (req, res) => {
-    res.json({ 
-        status: 'healthy',
-        bot: client.isReady() ? 'online' : 'offline',
-        uptime: client.uptime,
-        servers: client.guilds.cache.size,
-        users: client.users.cache.size,
-        commands: totalComandosExecutados,
-        timestamp: new Date().toISOString()
-    });
-});
-
-mainApp.listen(UNIFIED_PORT, '0.0.0.0', () => {
-    console.log(`
-╔══════════════════════════════════════════════════════════╗
-║     🚀 INSIGHTBOT - SERVIDOR INICIADO                   ║
-╠══════════════════════════════════════════════════════════╣
-║  📡 API: http://localhost:${UNIFIED_PORT}/api
-║  ❤️ Health: http://localhost:${UNIFIED_PORT}/health
-╚══════════════════════════════════════════════════════════╝
-    `);
-});
-
 // ===== INICIAR O BOT =====
 console.log('🚀 Iniciando InsightBot...');
 client.login(TOKEN).catch(error => {
