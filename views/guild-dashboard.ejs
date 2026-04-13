@@ -1,0 +1,272 @@
+<div class="top-bar">
+    <div class="page-title">
+        <h1>Configurações do Servidor</h1>
+        <p>Gerencie as configurações do InsightBot</p>
+    </div>
+    <div class="top-actions">
+        <button class="btn-save" onclick="saveConfig()">
+            <i class="fas fa-save"></i> Salvar
+        </button>
+    </div>
+</div>
+
+<div class="guild-tabs">
+    <button class="tab-btn active" onclick="showTab('overview')">Visão Geral</button>
+    <button class="tab-btn" onclick="showTab('commands')">Comandos</button>
+    <button class="tab-btn" onclick="showTab('suggestions')">Sugestões</button>
+    <button class="tab-btn" onclick="showTab('stats')">Estatísticas</button>
+</div>
+
+<!-- Tab: Visão Geral -->
+<div id="overview-tab" class="tab-content active">
+    <div class="info-grid">
+        <div class="info-card">
+            <div class="info-card-header">
+                <i class="fas fa-robot"></i>
+                <h3>Status do Bot</h3>
+            </div>
+            <div class="info-card-body">
+                <div class="status-indicator online">
+                    <span class="status-dot"></span>
+                    Online
+                </div>
+                <p>O bot está funcionando corretamente neste servidor.</p>
+            </div>
+        </div>
+        
+        <div class="info-card">
+            <div class="info-card-header">
+                <i class="fas fa-chart-simple"></i>
+                <h3>Resumo</h3>
+            </div>
+            <div class="info-card-body">
+                <div class="stats-mini">
+                    <div class="stat-item">
+                        <span class="stat-label">Sugestões hoje</span>
+                        <span class="stat-num" id="todaySuggestions">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Total de sugestões</span>
+                        <span class="stat-num" id="totalSuggestions">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Votos recebidos</span>
+                        <span class="stat-num" id="totalVotes">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tab: Comandos -->
+<div id="commands-tab" class="tab-content">
+    <div class="section-header">
+        <h3>Gerenciar Comandos</h3>
+        <p>Ative ou desative comandos específicos</p>
+    </div>
+    
+    <div class="commands-list">
+        <div class="command-item">
+            <div class="command-info">
+                <i class="fas fa-lightbulb"></i>
+                <div>
+                    <h4>!suggest / !sugestao</h4>
+                    <p>Permite que usuários enviem sugestões</p>
+                </div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="cmd-suggest" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+        
+        <div class="command-item">
+            <div class="command-info">
+                <i class="fas fa-chart-bar"></i>
+                <div>
+                    <h4>!stats / !estatisticas</h4>
+                    <p>Mostra estatísticas do sistema de sugestões</p>
+                </div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="cmd-stats" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+        
+        <div class="command-item">
+            <div class="command-info">
+                <i class="fas fa-trophy"></i>
+                <div>
+                    <h4>!topsuggestions</h4>
+                    <p>Mostra as sugestões mais votadas</p>
+                </div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="cmd-topsuggestions" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+        
+        <div class="command-item">
+            <div class="command-info">
+                <i class="fas fa-info-circle"></i>
+                <div>
+                    <h4>!help</h4>
+                    <p>Mostra a lista de comandos disponíveis</p>
+                </div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="cmd-help" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+</div>
+
+<!-- Tab: Sugestões -->
+<div id="suggestions-tab" class="tab-content">
+    <div class="section-header">
+        <h3>Canais de Sugestão</h3>
+        <p>Configure onde as sugestões serão enviadas e recebidas</p>
+    </div>
+    
+    <div class="config-form">
+        <div class="form-group">
+            <label><i class="fas fa-pen"></i> Canal de Envio</label>
+            <select id="suggestions-channel" class="channel-select">
+                <option value="">Selecione um canal...</option>
+                <% if (channels && channels.length) { %>
+                    <% channels.forEach(channel => { %>
+                        <option value="<%= channel.id %>" <%= botConfig.suggestionsChannel === channel.id ? 'selected' : '' %>>
+                            #<%= channel.name %>
+                        </option>
+                    <% }); %>
+                <% } %>
+            </select>
+            <p class="hint">Canal onde o embed de sugestões será enviado</p>
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-inbox"></i> Canal de Recebimento</label>
+            <select id="receive-channel" class="channel-select">
+                <option value="">Selecione um canal...</option>
+                <% if (channels && channels.length) { %>
+                    <% channels.forEach(channel => { %>
+                        <option value="<%= channel.id %>" <%= botConfig.receiveChannel === channel.id ? 'selected' : '' %>>
+                            #<%= channel.name %>
+                        </option>
+                    <% }); %>
+                <% } %>
+            </select>
+            <p class="hint">Canal onde as sugestões serão postadas para votação</p>
+        </div>
+    </div>
+</div>
+
+<!-- Tab: Estatísticas -->
+<div id="stats-tab" class="tab-content">
+    <div class="stats-detailed">
+        <div class="stat-card-large">
+            <div class="stat-icon-large"><i class="fas fa-lightbulb"></i></div>
+            <div class="stat-content">
+                <h3>Total de Sugestões</h3>
+                <p class="stat-big" id="detail-total-suggestions">-</p>
+            </div>
+        </div>
+        
+        <div class="stat-card-large">
+            <div class="stat-icon-large"><i class="fas fa-thumbs-up"></i></div>
+            <div class="stat-content">
+                <h3>Votos Positivos</h3>
+                <p class="stat-big" id="detail-upvotes">-</p>
+            </div>
+        </div>
+        
+        <div class="stat-card-large">
+            <div class="stat-icon-large"><i class="fas fa-thumbs-down"></i></div>
+            <div class="stat-content">
+                <h3>Votos Negativos</h3>
+                <p class="stat-big" id="detail-downvotes">-</p>
+            </div>
+        </div>
+        
+        <div class="stat-card-large">
+            <div class="stat-icon-large"><i class="fas fa-users"></i></div>
+            <div class="stat-content">
+                <h3>Usuários Participantes</h3>
+                <p class="stat-big" id="detail-participants">-</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const guildId = '<%= selectedGuild %>';
+    
+    async function saveConfig() {
+        const config = {
+            suggestionsChannel: document.getElementById('suggestions-channel')?.value,
+            receiveChannel: document.getElementById('receive-channel')?.value,
+            commands: {
+                suggest: document.getElementById('cmd-suggest')?.checked,
+                stats: document.getElementById('cmd-stats')?.checked,
+                topsuggestions: document.getElementById('cmd-topsuggestions')?.checked,
+                help: document.getElementById('cmd-help')?.checked
+            }
+        };
+        
+        try {
+            const res = await fetch(`/api/dashboard/${guildId}/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            });
+            
+            const data = await res.json();
+            if (res.ok) {
+                showToast('✅ Configurações salvas com sucesso!', 'success');
+            } else {
+                showToast('❌ ' + (data.error || 'Erro ao salvar'), 'error');
+            }
+        } catch (error) {
+            showToast('❌ Erro de conexão', 'error');
+        }
+    }
+    
+    function showTab(tabName) {
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(tabName + '-tab').classList.add('active');
+        event.target.classList.add('active');
+    }
+    
+    function showToast(message, type) {
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.innerHTML = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
+    
+    // Carregar estatísticas
+    async function loadStats() {
+        try {
+            const res = await fetch(`/api/bot/stats/<%= selectedGuild %>`);
+            const data = await res.json();
+            
+            document.getElementById('todaySuggestions').textContent = data.today || 0;
+            document.getElementById('totalSuggestions').textContent = data.total || 0;
+            document.getElementById('totalVotes').textContent = (data.upvotes || 0) + (data.downvotes || 0);
+            document.getElementById('detail-total-suggestions').textContent = data.total || 0;
+            document.getElementById('detail-upvotes').textContent = data.upvotes || 0;
+            document.getElementById('detail-downvotes').textContent = data.downvotes || 0;
+            document.getElementById('detail-participants').textContent = data.participants || 0;
+        } catch (error) {
+            console.error('Erro ao carregar estatísticas:', error);
+        }
+    }
+    
+    loadStats();
+</script>
