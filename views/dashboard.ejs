@@ -1,0 +1,64 @@
+<div class="top-bar">
+    <div class="page-title">
+        <h1>Dashboard</h1>
+        <p>Selecione um servidor para começar</p>
+    </div>
+</div>
+
+<div class="stats-overview">
+    <div class="stat-card">
+        <div class="stat-icon"><i class="fas fa-server"></i></div>
+        <div class="stat-info">
+            <h3>Servidores</h3>
+            <p class="stat-value" id="serverCount">-</p>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon"><i class="fas fa-users"></i></div>
+        <div class="stat-info">
+            <h3>Usuários</h3>
+            <p class="stat-value" id="userCount">-</p>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon"><i class="fas fa-lightbulb"></i></div>
+        <div class="stat-info">
+            <h3>Sugestões</h3>
+            <p class="stat-value" id="suggestionCount">-</p>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+        <div class="stat-info">
+            <h3>Ping</h3>
+            <p class="stat-value" id="pingValue">-</p>
+        </div>
+    </div>
+</div>
+
+<div class="section-header">
+    <h2><i class="fas fa-globe"></i> Seus Servidores</h2>
+    <p>Servidores onde você tem permissão de administrador</p>
+</div>
+
+<div class="guilds-grid">
+    <% if (guilds && guilds.length > 0) { %>
+        <% guilds.forEach(guild => { %>
+            <a href="/dashboard/<%= guild.id %>" class="guild-card">
+                <% if (guild.icon) { %>
+                    <img src="https://cdn.discordapp.com/icons/<%= guild.id %>/<%= guild.icon %>.png?size=128" alt="<%= guild.name %>" class="guild-icon">
+                <% } else { %>
+                    <div class="guild-icon default"><%= guild.name.charAt(0) %></div>
+                <% } %>
+                <h3><%= guild.name %></h3>
+                <p><i class="fas fa-user-shield"></i> Administrador</p>
+            </a>
+        <% }); %>
+    <% } else { %>
+        <div class="empty-state">
+            <i class="fas fa-server"></i>
+            <h3>Nenhum servidor encontrado</h3>
+            <p>Você precisa ser administrador em um servidor para gerenciá-lo.</p>
+        </div>
+    <% } %>
+</div>
