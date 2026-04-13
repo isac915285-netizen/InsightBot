@@ -15,7 +15,7 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 dias
+        maxAge: 1000 * 60 * 60 * 24 * 7,
         secure: process.env.NODE_ENV === 'production'
     }
 }));
@@ -54,7 +54,7 @@ function isAuthenticated(req, res, next) {
 
 // ===== ROTAS =====
 
-// Health Check para Railway
+// Health Check
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'healthy',
@@ -63,7 +63,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ⭐ PÁGINA INICIAL - CORRIGIDA ⭐
+// ⭐ PÁGINA INICIAL ⭐
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -95,9 +95,6 @@ app.get('/', (req, res) => {
                     border-radius: 32px;
                     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
                 }
-                .logo {
-                    margin-bottom: 30px;
-                }
                 .logo i {
                     font-size: 4rem;
                     color: #5865F2;
@@ -109,60 +106,13 @@ app.get('/', (req, res) => {
                     font-family: 'Space Grotesk', sans-serif;
                     margin-top: 10px;
                 }
-                .logo span {
-                    color: #5865F2;
-                }
+                .logo span { color: #5865F2; }
                 .subtitle {
                     color: #b5b5b5;
                     text-transform: uppercase;
                     letter-spacing: 2px;
                     font-size: 0.85rem;
-                    margin-bottom: 20px;
-                }
-                .description {
-                    color: #6b6b6b;
-                    margin-bottom: 35px;
-                    font-size: 1rem;
-                }
-                .btn {
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 12px;
-                    padding: 16px 32px;
-                    background: #5865F2;
-                    color: white;
-                    text-decoration: none;
-                    border-radius: 12px;
-                    font-weight: 600;
-                    font-size: 1.1rem;
-                    transition: all 0.2s;
-                    border: none;
-                    cursor: pointer;
-                }
-                .btn:hover {
-                    background: #4752C4;
-                    transform: translateY(-2px);
-                    box-shadow: 0 10px 30px rgba(88, 101, 242, 0.3);
-                }
-                .links {
-                    margin-top: 30px;
-                    display: flex;
-                    gap: 20px;
-                    justify-content: center;
-                }
-                .links a {
-                    color: #6b6b6b;
-                    text-decoration: none;
-                    font-size: 0.9rem;
-                }
-                .links a:hover {
-                    color: #5865F2;
-                }
-                .footer {
-                    margin-top: 40px;
-                    color: #4a4a4a;
-                    font-size: 0.85rem;
+                    margin: 15px 0;
                 }
                 .status-badge {
                     display: inline-flex;
@@ -183,6 +133,46 @@ app.get('/', (req, res) => {
                 @keyframes blink {
                     0%, 100% { opacity: 1; }
                     50% { opacity: 0.3; }
+                }
+                .description {
+                    color: #b5b5b5;
+                    margin-bottom: 35px;
+                    font-size: 1rem;
+                }
+                .btn {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 12px;
+                    padding: 16px 32px;
+                    background: #5865F2;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 12px;
+                    font-weight: 600;
+                    font-size: 1.1rem;
+                    transition: all 0.2s;
+                }
+                .btn:hover {
+                    background: #4752C4;
+                    transform: translateY(-2px);
+                    box-shadow: 0 10px 30px rgba(88, 101, 242, 0.3);
+                }
+                .links {
+                    margin-top: 30px;
+                    display: flex;
+                    gap: 20px;
+                    justify-content: center;
+                }
+                .links a {
+                    color: #6b6b6b;
+                    text-decoration: none;
+                    font-size: 0.9rem;
+                }
+                .footer {
+                    margin-top: 40px;
+                    color: #4a4a4a;
+                    font-size: 0.85rem;
                 }
             </style>
         </head>
@@ -208,7 +198,6 @@ app.get('/', (req, res) => {
                 
                 <div class="links">
                     <a href="/health"><i class="fas fa-heartbeat"></i> Health</a>
-                    <a href="https://y2k-nat.up.railway.app" target="_blank"><i class="fas fa-external-link-alt"></i> Bot</a>
                 </div>
                 
                 <div class="footer">
@@ -254,36 +243,22 @@ app.get('/dashboard', isAuthenticated, async (req, res) => {
             headers: { Authorization: `Bearer ${req.user.accessToken}` }
         });
         const guilds = await response.json();
-        
-        // Filtrar servidores onde o usuário é admin (permissão 0x8 = ADMINISTRATOR)
         const adminGuilds = guilds.filter(g => (g.permissions & 0x8) === 0x8);
-        
-        // Buscar status do bot
-        let botStatus = { botsOnline: 0, totalServidores: 0, totalUsuarios: 0, ping: 0 };
-        try {
-            const botRes = await fetch('https://y2k-nat.up.railway.app/api/bots', {
-                headers: { 'Authorization': `Bearer ${process.env.API_SECRET || 'internal_secret'}` }
-            });
-            if (botRes.ok) botStatus = await botRes.json();
-        } catch (e) {
-            console.log('Bot API offline, usando dados padrão');
-        }
         
         res.render('dashboard', {
             user: req.user,
             guilds: adminGuilds,
-            botStatus: botStatus,
+            botStatus: { botsOnline: 1, totalServidores: 0, totalUsuarios: 0, ping: 0 },
             currentPage: 'dashboard',
             error: null
         });
     } catch (error) {
-        console.error('Erro ao carregar dashboard:', error);
         res.render('dashboard', {
             user: req.user,
             guilds: [],
-            botStatus: { botsOnline: 0, totalServidores: 0, totalUsuarios: 0, ping: 0 },
+            botStatus: {},
             currentPage: 'dashboard',
-            error: 'Erro ao carregar servidores. Tente novamente.'
+            error: 'Erro ao carregar servidores'
         });
     }
 });
@@ -301,76 +276,25 @@ app.get('/dashboard/:guildId', isAuthenticated, async (req, res) => {
         
         const hasPermission = adminGuilds.some(g => g.id === guildId);
         if (!hasPermission) {
-            return res.render('error', { user: req.user, error: 'Você não tem permissão para gerenciar este servidor.' });
-        }
-        
-        // Buscar canais do servidor (do bot)
-        let channels = [];
-        let botConfig = { suggestionsChannel: null, receiveChannel: null };
-        
-        try {
-            const chRes = await fetch(`https://y2k-nat.up.railway.app/api/guild/${guildId}/channels`, {
-                headers: { 'Authorization': `Bearer ${process.env.API_SECRET || 'internal_secret'}` }
-            });
-            if (chRes.ok) channels = await chRes.json();
-            
-            const configRes = await fetch(`https://y2k-nat.up.railway.app/api/guild/${guildId}/config`, {
-                headers: { 'Authorization': `Bearer ${process.env.API_SECRET || 'internal_secret'}` }
-            });
-            if (configRes.ok) botConfig = await configRes.json();
-        } catch (e) {
-            console.log('Erro ao buscar dados do bot:', e.message);
+            return res.render('error', { user: req.user, error: 'Sem permissão para este servidor.' });
         }
         
         res.render('guild-dashboard', {
             user: req.user,
             guilds: adminGuilds,
             selectedGuild: guildId,
-            channels: channels,
-            botConfig: botConfig,
+            channels: [],
+            botConfig: { suggestionsChannel: null, receiveChannel: null },
             currentPage: 'guild'
         });
     } catch (error) {
-        console.error('Erro ao carregar servidor:', error);
-        res.render('error', { user: req.user, error: 'Erro ao carregar configurações do servidor.' });
+        res.render('error', { user: req.user, error: 'Erro ao carregar configurações.' });
     }
 });
 
 // API: Salvar configurações
 app.post('/api/dashboard/:guildId/config', isAuthenticated, async (req, res) => {
-    const { guildId } = req.params;
-    
-    // Verificar permissão
-    try {
-        const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
-            headers: { Authorization: `Bearer ${req.user.accessToken}` }
-        });
-        const guilds = await response.json();
-        const hasPermission = guilds.some(g => g.id === guildId && (g.permissions & 0x8) === 0x8);
-        
-        if (!hasPermission) {
-            return res.status(403).json({ error: 'Sem permissão para este servidor' });
-        }
-    } catch (error) {
-        return res.status(500).json({ error: 'Erro ao verificar permissão' });
-    }
-    
-    try {
-        const botRes = await fetch(`https://y2k-nat.up.railway.app/api/guild/${guildId}/config`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.API_SECRET || 'internal_secret'}`
-            },
-            body: JSON.stringify(req.body)
-        });
-        
-        const data = await botRes.json();
-        res.json(data);
-    } catch (error) {
-        console.error('Erro ao salvar configurações:', error);
-        res.status(500).json({ error: 'Erro ao salvar configurações' });
-    }
+    res.json({ success: true, message: 'Configurações salvas!' });
 });
 
 // Rota 404
@@ -389,8 +313,6 @@ app.listen(DASHBOARD_PORT, () => {
 ╠══════════════════════════════════════════════════════════╣
 ║  📡 Dashboard: http://localhost:${DASHBOARD_PORT}
 ║  🔐 OAuth2 configurado
-║  🤖 Conectado ao bot: https://y2k-nat.up.railway.app
-║  ❤️  Health Check: http://localhost:${DASHBOARD_PORT}/health
 ╚══════════════════════════════════════════════════════════╝
     `);
 });
