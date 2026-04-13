@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Erro | InsightBot</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
+    <div style="text-align: center; padding: 40px;">
+        <i class="fas fa-exclamation-triangle" style="font-size: 4rem; color: #f23f43; margin-bottom: 20px;"></i>
+        <h1 style="font-size: 2rem; margin-bottom: 10px;">Ops! Algo deu errado</h1>
+        <p style="color: #b5b5b5; margin-bottom: 30px;"><%= error || 'Erro desconhecido' %></p>
+        <a href="/dashboard" style="color: #5865F2; text-decoration: none;">Voltar para Dashboard</a>
+    </div>
+</body>
+</html>
