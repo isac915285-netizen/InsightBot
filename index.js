@@ -3,6 +3,10 @@
 
 require('dotenv').config();
 const express = require('express');
+const session = require('express-session');
+const passport = require('passport');
+const DiscordStrategy = require('passport-discord').Strategy;
+const fetch = require('node-fetch');
 const { 
     Client, 
     GatewayIntentBits, 
@@ -1695,11 +1699,6 @@ setInterval(() => {
 // ============================================
 // SERVIDOR UNIFICADO (BOT + DASHBOARD + HEALTH CHECK)
 // ============================================
-const session = require('express-session');
-const passport = require('passport');
-const DiscordStrategy = require('passport-discord').Strategy;
-const fetch = require('node-fetch');
-
 const mainApp = express();
 const UNIFIED_PORT = process.env.PORT || 8080;
 
@@ -1841,7 +1840,6 @@ mainApp.get('/dashboard/:guildId', isAuthenticated, async (req, res) => {
             return res.render('error', { user: req.user, error: 'Sem permissão para este servidor.' });
         }
         
-        // Buscar canais do servidor
         const guild = client.guilds.cache.get(guildId);
         let channels = [];
         if (guild) {
@@ -1851,7 +1849,6 @@ mainApp.get('/dashboard/:guildId', isAuthenticated, async (req, res) => {
                 .slice(0, 50);
         }
         
-        // Buscar configurações
         const botConfig = suggestionsConfig[guildId] || { suggestionsChannel: null, receiveChannel: null };
         
         res.render('guild-dashboard', {
@@ -1872,7 +1869,6 @@ mainApp.post('/api/dashboard/:guildId/config', isAuthenticated, async (req, res)
     const { guildId } = req.params;
     const config = req.body;
     
-    // Verificar permissão
     try {
         const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
             headers: { Authorization: `Bearer ${req.user.accessToken}` }
@@ -1887,7 +1883,6 @@ mainApp.post('/api/dashboard/:guildId/config', isAuthenticated, async (req, res)
         return res.status(500).json({ error: 'Erro ao verificar permissão' });
     }
     
-    // Salvar configurações
     if (!suggestionsConfig[guildId]) {
         suggestionsConfig[guildId] = {};
     }
@@ -1920,7 +1915,6 @@ mainApp.listen(UNIFIED_PORT, () => {
 ║     🚀 INSIGHTBOT + DASHBOARD - SERVIDOR UNIFICADO      ║
 ╠══════════════════════════════════════════════════════════╣
 ║  📡 Servidor: http://localhost:${UNIFIED_PORT}
-║  🤖 Bot: ${client.isReady() ? 'ONLINE' : 'AGUARDANDO...'}
 ║  🎛️ Dashboard: http://localhost:${UNIFIED_PORT}/dashboard
 ║  🔐 Login: http://localhost:${UNIFIED_PORT}/login
 ║  ❤️ Health: http://localhost:${UNIFIED_PORT}/health
