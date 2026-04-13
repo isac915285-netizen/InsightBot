@@ -1693,15 +1693,66 @@ setInterval(() => {
 }, 1800000);
 
 // ============================================
-// HEALTH CHECK PARA RAILWAY
+// SERVIDOR UNIFICADO (BOT + DASHBOARD + HEALTH CHECK)
 // ============================================
-const healthApp = express();
-const HEALTH_PORT = process.env.HEALTH_PORT || 8080;
+const session = require('express-session');
+const passport = require('passport');
+const DiscordStrategy = require('passport-discord').Strategy;
+const fetch = require('node-fetch');
 
-healthApp.get('/health', (req, res) => {
+const mainApp = express();
+const UNIFIED_PORT = process.env.PORT || 8080;
+
+// ===== CONFIGURAÇÃO DA SESSÃO =====
+mainApp.use(session({
+    secret: process.env.SESSION_SECRET || 'dashboard_secret_key_2024',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+        secure: process.env.NODE_ENV === 'production'
+    }
+}));
+
+// ===== PASSPORT =====
+mainApp.use(passport.initialize());
+mainApp.use(passport.session());
+
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((obj, done) => done(null, obj));
+
+passport.use(new DiscordStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: process.env.REDIRECT_URI || 'http://localhost:8080/callback',
+    scope: ['identify', 'guilds']
+}, (accessToken, refreshToken, profile, done) => {
+    profile.accessToken = accessToken;
+    return done(null, profile);
+}));
+
+// ===== MIDDLEWARES =====
+mainApp.use(express.json());
+mainApp.use(express.urlencoded({ extended: true }));
+mainApp.use(express.static(path.join(__dirname, 'dashboard', 'public')));
+mainApp.set('view engine', 'ejs');
+mainApp.set('views', path.join(__dirname, 'dashboard', 'views'));
+
+// Middleware de autenticação
+function isAuthenticated(req, res, next) {
+    if (req.isAuthenticated()) return next();
+    req.session.returnTo = req.originalUrl;
+    res.redirect('/login');
+}
+
+// ===== ROTAS DA DASHBOARD =====
+
+// Health Check
+mainApp.get('/health', (req, res) => {
     res.json({ 
         status: 'healthy',
         bot: client.isReady() ? 'online' : 'offline',
+        dashboard: 'online',
         uptime: client.uptime,
         servers: client.guilds.cache.size,
         users: client.users.cache.size,
@@ -1710,17 +1761,175 @@ healthApp.get('/health', (req, res) => {
     });
 });
 
-healthApp.listen(HEALTH_PORT, () => {
-    console.log(`❤️ Health check rodando na porta ${HEALTH_PORT}`);
+// Página inicial
+mainApp.get('/', (req, res) => {
+    res.redirect('/dashboard');
 });
-// ===== FIM HEALTH CHECK =====
 
-// ============================================
-// INICIAR O BOT
-// ============================================
+// Login
+mainApp.get('/login', (req, res) => {
+    if (req.isAuthenticated()) return res.redirect('/dashboard');
+    res.render('login', { user: req.user, error: null });
+});
 
+// Login com Discord
+mainApp.get('/auth/discord', passport.authenticate('discord'));
+
+// Callback do Discord
+mainApp.get('/callback', 
+    passport.authenticate('discord', { 
+        failureRedirect: '/login',
+        successRedirect: '/dashboard'
+    })
+);
+
+// Logout
+mainApp.get('/logout', (req, res) => {
+    req.logout(() => {
+        req.session.destroy(() => {
+            res.redirect('/');
+        });
+    });
+});
+
+// Dashboard principal
+mainApp.get('/dashboard', isAuthenticated, async (req, res) => {
+    try {
+        const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+            headers: { Authorization: `Bearer ${req.user.accessToken}` }
+        });
+        const guilds = await response.json();
+        
+        const adminGuilds = guilds.filter(g => (g.permissions & 0x8) === 0x8);
+        
+        res.render('dashboard', {
+            user: req.user,
+            guilds: adminGuilds,
+            botStatus: {
+                botsOnline: client.isReady() ? 1 : 0,
+                totalServidores: client.guilds.cache.size,
+                totalUsuarios: client.users.cache.size,
+                ping: client.ws.ping
+            },
+            currentPage: 'dashboard',
+            error: null
+        });
+    } catch (error) {
+        res.render('dashboard', {
+            user: req.user,
+            guilds: [],
+            botStatus: { botsOnline: 0, totalServidores: 0, totalUsuarios: 0, ping: 0 },
+            currentPage: 'dashboard',
+            error: 'Erro ao carregar servidores'
+        });
+    }
+});
+
+// Dashboard de servidor específico
+mainApp.get('/dashboard/:guildId', isAuthenticated, async (req, res) => {
+    const { guildId } = req.params;
+    
+    try {
+        const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+            headers: { Authorization: `Bearer ${req.user.accessToken}` }
+        });
+        const guilds = await response.json();
+        const adminGuilds = guilds.filter(g => (g.permissions & 0x8) === 0x8);
+        
+        const hasPermission = adminGuilds.some(g => g.id === guildId);
+        if (!hasPermission) {
+            return res.render('error', { user: req.user, error: 'Sem permissão para este servidor.' });
+        }
+        
+        // Buscar canais do servidor
+        const guild = client.guilds.cache.get(guildId);
+        let channels = [];
+        if (guild) {
+            channels = guild.channels.cache
+                .filter(c => c.type === 0)
+                .map(c => ({ id: c.id, name: c.name }))
+                .slice(0, 50);
+        }
+        
+        // Buscar configurações
+        const botConfig = suggestionsConfig[guildId] || { suggestionsChannel: null, receiveChannel: null };
+        
+        res.render('guild-dashboard', {
+            user: req.user,
+            guilds: adminGuilds,
+            selectedGuild: guildId,
+            channels: channels,
+            botConfig: botConfig,
+            currentPage: 'guild'
+        });
+    } catch (error) {
+        res.render('error', { user: req.user, error: 'Erro ao carregar configurações.' });
+    }
+});
+
+// API: Salvar configurações
+mainApp.post('/api/dashboard/:guildId/config', isAuthenticated, async (req, res) => {
+    const { guildId } = req.params;
+    const config = req.body;
+    
+    // Verificar permissão
+    try {
+        const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+            headers: { Authorization: `Bearer ${req.user.accessToken}` }
+        });
+        const guilds = await response.json();
+        const hasPermission = guilds.some(g => g.id === guildId && (g.permissions & 0x8) === 0x8);
+        
+        if (!hasPermission) {
+            return res.status(403).json({ error: 'Sem permissão' });
+        }
+    } catch (error) {
+        return res.status(500).json({ error: 'Erro ao verificar permissão' });
+    }
+    
+    // Salvar configurações
+    if (!suggestionsConfig[guildId]) {
+        suggestionsConfig[guildId] = {};
+    }
+    
+    if (config.suggestionsChannel !== undefined) {
+        suggestionsConfig[guildId].suggestionsChannel = config.suggestionsChannel;
+    }
+    if (config.receiveChannel !== undefined) {
+        suggestionsConfig[guildId].receiveChannel = config.receiveChannel;
+    }
+    suggestionsConfig[guildId].configuredAt = Date.now();
+    
+    saveConfig();
+    
+    res.json({ success: true, message: 'Configurações salvas com sucesso!' });
+});
+
+// Rota 404
+mainApp.use((req, res) => {
+    res.status(404).render('error', { 
+        user: req.user, 
+        error: 'Página não encontrada' 
+    });
+});
+
+// Iniciar servidor unificado
+mainApp.listen(UNIFIED_PORT, () => {
+    console.log(`
+╔══════════════════════════════════════════════════════════╗
+║     🚀 INSIGHTBOT + DASHBOARD - SERVIDOR UNIFICADO      ║
+╠══════════════════════════════════════════════════════════╣
+║  📡 Servidor: http://localhost:${UNIFIED_PORT}
+║  🤖 Bot: ${client.isReady() ? 'ONLINE' : 'AGUARDANDO...'}
+║  🎛️ Dashboard: http://localhost:${UNIFIED_PORT}/dashboard
+║  🔐 Login: http://localhost:${UNIFIED_PORT}/login
+║  ❤️ Health: http://localhost:${UNIFIED_PORT}/health
+╚══════════════════════════════════════════════════════════╝
+    `);
+});
+
+// ===== INICIAR O BOT =====
 console.log('🚀 Iniciando InsightBot...');
-console.log('============================================');
 console.log('📋 Comandos Slash: /suggestions, /suggestionschannel');
 console.log('📋 Comandos Prefixo: !help, !ping, !info, !suggest, etc.');
 console.log('📡 Heartbeat configurado para: ' + BOT_CONFIG.apiUrl);
