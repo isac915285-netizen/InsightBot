@@ -44,6 +44,7 @@ passport.use(new DiscordStrategy({
     scope: ['identify', 'guilds']
 }, (accessToken, refreshToken, profile, done) => {
     profile.accessToken = accessToken;
+    profile.refreshToken = refreshToken;
     return done(null, profile);
 }));
 
@@ -284,13 +285,40 @@ app.get('/logout', (req, res) => {
     });
 });
 
-// ===== DASHBOARD PRINCIPAL =====
+// ===== DASHBOARD PRINCIPAL (COM TRATAMENTO DE ERRO) =====
 app.get('/dashboard', isAuthenticated, async (req, res) => {
     try {
         const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
             headers: { Authorization: `Bearer ${req.user.accessToken}` }
         });
+        
+        // ⭐ TRATAMENTO DE TOKEN EXPIRADO ⭐
+        if (response.status === 401) {
+            console.log('⚠️ Token expirado, redirecionando para login');
+            return req.logout(() => {
+                res.redirect('/login');
+            });
+        }
+        
         const userGuilds = await response.json();
+        
+        // ⭐ VERIFICAR SE É UM ARRAY ⭐
+        if (!Array.isArray(userGuilds)) {
+            console.error('❌ Discord API error:', userGuilds);
+            return res.send(`
+                <!DOCTYPE html>
+                <html>
+                <head><title>Erro | InsightBot</title></head>
+                <body style="font-family: Arial; background: #0a0a0c; color: white; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                    <div style="text-align: center;">
+                        <h1 style="color: #f23f43;">❌ Erro de Autenticação</h1>
+                        <p>Sua sessão expirou. Por favor, faça login novamente.</p>
+                        <a href="/logout" style="color: #5865F2; text-decoration: none; font-weight: bold;">Clique aqui para reconectar</a>
+                    </div>
+                </body>
+                </html>
+            `);
+        }
         
         const adminGuilds = userGuilds.filter(g => (g.permissions & 0x8) === 0x8);
         
@@ -332,6 +360,7 @@ app.get('/dashboard', isAuthenticated, async (req, res) => {
                 currentPage: 'dashboard'
             });
         } catch (e) {
+            // Fallback HTML
             const guildsList = guildsWithBot.map(g => `
                 <a href="/dashboard/${g.id}" style="text-decoration: none; color: inherit;">
                     <div style="background: #141518; border: 1px solid ${g.hasBot ? '#5865F2' : '#2a2a2a'}; border-radius: 12px; padding: 20px; text-align: center;">
@@ -397,7 +426,19 @@ app.get('/dashboard', isAuthenticated, async (req, res) => {
         }
     } catch (error) {
         console.error('❌ Erro no dashboard:', error);
-        res.send(`<h1>Erro ao carregar dashboard</h1><p>${error.message}</p><a href="/">Voltar</a>`);
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head><title>Erro | InsightBot</title></head>
+            <body style="font-family: Arial; background: #0a0a0c; color: white; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                <div style="text-align: center;">
+                    <h1 style="color: #f23f43;">❌ Erro no Dashboard</h1>
+                    <p>${error.message}</p>
+                    <a href="/logout" style="color: #5865F2; text-decoration: none; font-weight: bold;">Tentar novamente</a>
+                </div>
+            </body>
+            </html>
+        `);
     }
 });
 
@@ -409,7 +450,24 @@ app.get('/dashboard/:guildId', isAuthenticated, async (req, res) => {
         const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
             headers: { Authorization: `Bearer ${req.user.accessToken}` }
         });
+        
+        // ⭐ TRATAMENTO DE TOKEN EXPIRADO ⭐
+        if (response.status === 401) {
+            return req.logout(() => {
+                res.redirect('/login');
+            });
+        }
+        
         const userGuilds = await response.json();
+        
+        if (!Array.isArray(userGuilds)) {
+            return res.send(`
+                <h1>Erro de autenticação</h1>
+                <p>Por favor, faça login novamente.</p>
+                <a href="/logout">Sair e reconectar</a>
+            `);
+        }
+        
         const hasPermission = userGuilds.some(g => g.id === guildId && (g.permissions & 0x8) === 0x8);
         
         if (!hasPermission) {
@@ -579,7 +637,17 @@ app.post('/api/dashboard/:guildId/config', isAuthenticated, async (req, res) => 
         const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
             headers: { Authorization: `Bearer ${req.user.accessToken}` }
         });
+        
+        if (response.status === 401) {
+            return res.status(401).json({ error: 'Token expirado' });
+        }
+        
         const userGuilds = await response.json();
+        
+        if (!Array.isArray(userGuilds)) {
+            return res.status(500).json({ error: 'Erro na API Discord' });
+        }
+        
         const hasPermission = userGuilds.some(g => g.id === guildId && (g.permissions & 0x8) === 0x8);
         
         if (!hasPermission) {
@@ -634,12 +702,16 @@ app.use((req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
-║     🚀 INSIGHTBOT DASHBOARD + API - SERVIDOR UNIFICADO  ║
+║     🚀 INSIGHTBOT DASHBOARD + API - SERVIDOR UNIFICADO ║
 ╠══════════════════════════════════════════════════════════╣
-║  📡 Dashboard: http://localhost:${PORT}
-║  🔐 OAuth2 configurado
-║  📡 API: http://localhost:${PORT}/api
-║  ❤️ Health: http://localhost:${PORT}/health
+║  📡 Porta: ${PORT}                                          ║
+║  🌐 URL: http://localhost:${PORT}                          ║
+║  🔗 API: http://localhost:${PORT}/api/health              ║
+║  📊 Dashboard: http://localhost:${PORT}/dashboard         ║
+╠══════════════════════════════════════════════════════════╣
+║  ✅ Servidor rodando em 0.0.0.0:${PORT}                  ║
+║  🔒 Sessões configuradas                                  ║
+║  🔐 Autenticação Discord ativa                            ║
 ╚══════════════════════════════════════════════════════════╝
     `);
 });
