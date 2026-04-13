@@ -2,6 +2,7 @@
 // Desenvolvido com discord.js v14
 
 require('dotenv').config();
+const express = require('express');
 const { 
     Client, 
     GatewayIntentBits, 
@@ -498,7 +499,7 @@ client.on(Events.MessageCreate, async (message) => {
             [
                 {
                     name: '🤖 Link de Convite',
-                    value: '[Clique aqui para convidar](https://discord.com/oauth2/authorize?client_id=SEU_CLIENT_ID&scope=bot&permissions=8)',
+                    value: '[Clique aqui para convidar](https://discord.com/oauth2/authorize?client_id=1491182523177242754&scope=bot&permissions=8)',
                     inline: false
                 },
                 {
@@ -1690,6 +1691,29 @@ setInterval(() => {
     saveConfig();
     console.log('💾 Backup automático das configurações realizado');
 }, 1800000);
+
+// ============================================
+// HEALTH CHECK PARA RAILWAY
+// ============================================
+const healthApp = express();
+const HEALTH_PORT = process.env.HEALTH_PORT || 8080;
+
+healthApp.get('/health', (req, res) => {
+    res.json({ 
+        status: 'healthy',
+        bot: client.isReady() ? 'online' : 'offline',
+        uptime: client.uptime,
+        servers: client.guilds.cache.size,
+        users: client.users.cache.size,
+        commands: totalComandosExecutados,
+        timestamp: new Date().toISOString()
+    });
+});
+
+healthApp.listen(HEALTH_PORT, () => {
+    console.log(`❤️ Health check rodando na porta ${HEALTH_PORT}`);
+});
+// ===== FIM HEALTH CHECK =====
 
 // ============================================
 // INICIAR O BOT
