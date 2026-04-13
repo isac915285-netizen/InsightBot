@@ -5,10 +5,9 @@ const passport = require('passport');
 const DiscordStrategy = require('passport-discord').Strategy;
 const path = require('path');
 const fetch = require('node-fetch');
-const fs = require('fs');
 
 const app = express();
-const PORT = process.env.DASHBOARD_PORT || 4000;
+const DASHBOARD_PORT = process.env.PORT || 4000;
 
 // ===== CONFIGURAÇÃO DA SESSÃO =====
 app.use(session({
@@ -24,13 +23,8 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-passport.serializeUser((user, done) => {
-    done(null, user);
-});
-
-passport.deserializeUser((obj, done) => {
-    done(null, obj);
-});
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((obj, done) => done(null, obj));
 
 passport.use(new DiscordStrategy({
     clientID: process.env.CLIENT_ID,
@@ -56,21 +50,12 @@ function isAuthenticated(req, res, next) {
     res.redirect('/login');
 }
 
-// Middleware para verificar permissão no servidor
-async function hasGuildPermission(userId, guildId) {
-    try {
-        const response = await fetch(`https://discord.com/api/v10/users/@me/guilds`, {
-            headers: { Authorization: `Bearer ${user.accessToken}` }
-        });
-        const guilds = await response.json();
-        const guild = guilds.find(g => g.id === guildId);
-        return guild && (guild.permissions & 0x8) === 0x8; // ADMINISTRATOR
-    } catch (error) {
-        return false;
-    }
-}
-
 // ===== ROTAS =====
+
+// Health Check para Railway
+app.get('/health', (req, res) => {
+    res.json({ status: 'healthy', dashboard: 'online', timestamp: new Date().toISOString() });
+});
 
 // Página inicial
 app.get('/', (req, res) => {
@@ -96,14 +81,10 @@ app.get('/callback',
 
 // Logout
 app.get('/logout', (req, res) => {
-    req.logout(() => {
-        res.redirect('/');
-    });
+    req.logout(() => res.redirect('/'));
 });
 
-// ===== DASHBOARD =====
-
-// Página principal da dashboard
+// Dashboard principal
 app.get('/dashboard', isAuthenticated, async (req, res) => {
     try {
         const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
@@ -111,33 +92,40 @@ app.get('/dashboard', isAuthenticated, async (req, res) => {
         });
         const guilds = await response.json();
         
-        // Filtrar servidores onde o usuário tem permissão de administrador
+        // Filtrar servidores onde o usuário é admin (permissão 0x8 = ADMINISTRATOR)
         const adminGuilds = guilds.filter(g => (g.permissions & 0x8) === 0x8);
+        
+        // Buscar status do bot
+        let botStatus = { botsOnline: 0, totalServidores: 0, totalUsuarios: 0, ping: 0 };
+        try {
+            const statusRes = await fetch(`http://localhost:${process.env.PORT || 3000}/api/bots`, {
+                headers: { 'Authorization': `Bearer ${process.env.API_SECRET}` }
+            });
+            if (statusRes.ok) botStatus = await statusRes.json();
+        } catch (e) {}
         
         res.render('dashboard', {
             user: req.user,
             guilds: adminGuilds,
-            selectedGuild: null,
-            botGuilds: [], // Será preenchido via API
-            error: null
+            botStatus: botStatus,
+            currentPage: 'dashboard'
         });
     } catch (error) {
         res.render('dashboard', {
             user: req.user,
             guilds: [],
-            selectedGuild: null,
-            botGuilds: [],
+            botStatus: {},
+            currentPage: 'dashboard',
             error: 'Erro ao carregar servidores'
         });
     }
 });
 
-// Página de configuração de um servidor específico
+// Dashboard de servidor específico
 app.get('/dashboard/:guildId', isAuthenticated, async (req, res) => {
     const { guildId } = req.params;
     
     try {
-        // Verificar se usuário tem permissão
         const response = await fetch('https://discord.com/api/v10/users/@me/guilds', {
             headers: { Authorization: `Bearer ${req.user.accessToken}` }
         });
@@ -146,118 +134,68 @@ app.get('/dashboard/:guildId', isAuthenticated, async (req, res) => {
         
         const hasPermission = adminGuilds.some(g => g.id === guildId);
         if (!hasPermission) {
-            return res.status(403).render('error', {
-                user: req.user,
-                error: 'Você não tem permissão para gerenciar este servidor.'
-            });
+            return res.render('error', { user: req.user, error: 'Sem permissão para este servidor.' });
         }
         
-        // Buscar configurações do bot para este servidor
-        let botConfig = {};
-        try {
-            const configResponse = await fetch(`${process.env.API_URL}/api/bot/config/${guildId}`, {
-                headers: { 'Authorization': `Bearer ${req.user.accessToken}` }
-            });
-            if (configResponse.ok) {
-                botConfig = await configResponse.json();
-            }
-        } catch (error) {
-            console.error('Erro ao buscar configurações:', error);
-        }
-        
-        // Buscar canais do servidor (via API do bot)
+        // Buscar canais do servidor (do bot)
         let channels = [];
         try {
-            const channelsResponse = await fetch(`${process.env.API_URL}/api/bot/channels/${guildId}`, {
-                headers: { 'Authorization': `Bearer ${req.user.accessToken}` }
+            const chRes = await fetch(`http://localhost:${process.env.PORT || 3000}/api/guild/${guildId}/channels`, {
+                headers: { 'Authorization': `Bearer ${process.env.API_SECRET}` }
             });
-            if (channelsResponse.ok) {
-                channels = await channelsResponse.json();
-            }
-        } catch (error) {
-            console.error('Erro ao buscar canais:', error);
-        }
+            if (chRes.ok) channels = await chRes.json();
+        } catch (e) {}
         
-        // Buscar estatísticas
-        let stats = {};
+        // Buscar configurações do bot
+        let botConfig = { suggestionsChannel: null, receiveChannel: null };
         try {
-            const statsResponse = await fetch(`${process.env.API_URL}/api/bot/stats/${guildId}`, {
-                headers: { 'Authorization': `Bearer ${req.user.accessToken}` }
+            const configRes = await fetch(`http://localhost:${process.env.PORT || 3000}/api/guild/${guildId}/config`, {
+                headers: { 'Authorization': `Bearer ${process.env.API_SECRET}` }
             });
-            if (statsResponse.ok) {
-                stats = await statsResponse.json();
-            }
-        } catch (error) {
-            console.error('Erro ao buscar estatísticas:', error);
-        }
+            if (configRes.ok) botConfig = await configRes.json();
+        } catch (e) {}
         
         res.render('guild-dashboard', {
             user: req.user,
             guilds: adminGuilds,
             selectedGuild: guildId,
-            botConfig: botConfig,
             channels: channels,
-            stats: stats,
-            error: null
+            botConfig: botConfig,
+            currentPage: 'dashboard'
         });
     } catch (error) {
-        res.render('error', {
-            user: req.user,
-            error: 'Erro ao carregar configurações do servidor'
-        });
+        res.render('error', { user: req.user, error: 'Erro ao carregar configurações.' });
     }
 });
 
-// ===== API ENDPOINTS =====
-
-// Salvar configurações do servidor
+// API: Salvar configurações
 app.post('/api/dashboard/:guildId/config', isAuthenticated, async (req, res) => {
     const { guildId } = req.params;
-    const config = req.body;
-    
-    // Verificar permissão
-    if (!await hasGuildPermission(req.user.id, guildId)) {
-        return res.status(403).json({ error: 'Sem permissão' });
-    }
     
     try {
-        // Salvar configurações via API do bot
-        const response = await fetch(`${process.env.API_URL}/api/bot/config/${guildId}`, {
+        const response = await fetch(`http://localhost:${process.env.PORT || 3000}/api/guild/${guildId}/config`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.API_SECRET || 'internal_secret'}`
+                'Authorization': `Bearer ${process.env.API_SECRET}`
             },
-            body: JSON.stringify(config)
+            body: JSON.stringify(req.body)
         });
         
         const data = await response.json();
         res.json(data);
     } catch (error) {
-        res.status(500).json({ error: 'Erro ao salvar configurações' });
+        res.status(500).json({ error: 'Erro ao salvar' });
     }
 });
 
-// Obter status do bot
-app.get('/api/dashboard/bot-status', async (req, res) => {
-    try {
-        const response = await fetch(`${process.env.API_URL}/api/bots`, {
-            headers: { 'Authorization': `Bearer ${process.env.API_SECRET || 'internal_secret'}` }
-        });
-        const data = await response.json();
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: 'Erro ao buscar status' });
-    }
-});
-
-// ===== INICIAR SERVIDOR =====
-app.listen(PORT, () => {
+// Iniciar servidor
+app.listen(DASHBOARD_PORT, () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║         🎛️  INSIGHTBOT DASHBOARD INICIADA  🎛️           ║
 ╠══════════════════════════════════════════════════════════╣
-║  📡 Dashboard: http://localhost:${PORT}
+║  📡 Dashboard: http://localhost:${DASHBOARD_PORT}
 ║  🔐 OAuth2 configurado
 ║  🤖 Integrado com InsightBot
 ╚══════════════════════════════════════════════════════════╝
