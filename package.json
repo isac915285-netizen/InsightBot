@@ -1,4 +1,24 @@
 {
+  "name": "insight-dashboard",
+  "version": "1.0.0",
+  "description": "InsightBot Dashboard - Painel de Controle Web",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-session": "^1.18.0",
+    "passport": "^0.7.0",
+    "passport-discord": "^0.1.4",
+    "ejs": "^3.1.9",
+    "node-fetch": "^2.7.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}{
   "name": "insightbot",
   "version": "2.1.0",
   "description": "InsightBot - Sistema de sugestões para Discord com embeds, modais, votação e Dashboard Web",
