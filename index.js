@@ -1256,15 +1256,13 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 // ============================================
-// COMANDOS SLASH (APENAS OS 2 SOLICITADOS)
+// COMANDOS SLASH
 // ============================================
 
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     
     const command = interaction.commandName;
-    
-    // ===== INCREMENTAR CONTADOR =====
     totalComandosExecutados++;
     
     if (!isOwner(interaction.user.id)) {
@@ -1274,9 +1272,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
     }
     
-    // ============================================
-    // COMANDO SLASH: /suggestions
-    // ============================================
     if (command === 'suggestions') {
         const channel = interaction.options.getChannel('channel');
         
@@ -1288,9 +1283,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         
         const guildId = interaction.guild.id;
-        if (!suggestionsConfig[guildId]) {
-            suggestionsConfig[guildId] = {};
-        }
+        if (!suggestionsConfig[guildId]) suggestionsConfig[guildId] = {};
         suggestionsConfig[guildId].suggestionsChannel = channel.id;
         suggestionsConfig[guildId].configuredAt = Date.now();
         saveConfig();
@@ -1300,36 +1293,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             'Bem-vindo ao sistema de sugestões! Veja como funciona:',
             '#5865F2',
             [
-                {
-                    name: '📝 Como enviar uma sugestão',
-                    value: 'Clique no botão "Enviar Sugestão" abaixo e preencha o formulário com sua ideia.',
-                    inline: false
-                },
-                {
-                    name: '👍 Sistema de Votação',
-                    value: 'Após enviada, sua sugestão será postada em um canal especial onde outros membros poderão votar usando 👍 ou 👎.',
-                    inline: false
-                },
-                {
-                    name: '📊 Regras',
-                    value: '• Sugestões devem ser construtivas\n• Respeite outros membros\n• Sem spam ou conteúdo impróprio\n• Mínimo de 10 caracteres',
-                    inline: false
-                },
-                {
-                    name: '🎯 Objetivo',
-                    value: 'Ajudar a melhorar o servidor com ideias da comunidade!',
-                    inline: false
-                },
-                {
-                    name: '⚡ Dica',
-                    value: 'Use `!suggest [sua sugestão]` para enviar sugestões diretamente também!',
-                    inline: false
-                },
-                {
-                    name: '📚 Comandos Disponíveis',
-                    value: '`!help` - Ver todos os comandos\n`!mysuggestions` - Ver suas sugestões\n`!stats` - Ver estatísticas',
-                    inline: false
-                }
+                { name: '📝 Como enviar', value: 'Clique no botão "Enviar Sugestão" abaixo.', inline: false },
+                { name: '👍 Votação', value: 'Sua sugestão será postada para votação com 👍 e 👎.', inline: false },
+                { name: '⚡ Dica', value: 'Use `!suggest [texto]` para enviar diretamente!', inline: false }
             ]
         );
         
@@ -1340,27 +1306,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setEmoji('💡');
         
         const row = new ActionRowBuilder().addComponents(button);
-        
-        await channel.send({
-            embeds: [explanationEmbed],
-            components: [row]
-        });
-        
-        const confirmEmbed = createSuccessEmbed(
-            `Sistema de sugestões configurado com sucesso!\n\n` +
-            `**Canal de sugestões:** ${channel}\n` +
-            `**Canal de recebimento:** ${suggestionsConfig[guildId].receiveChannel ? `<#${suggestionsConfig[guildId].receiveChannel}>` : 'Não configurado'}`
-        );
+        await channel.send({ embeds: [explanationEmbed], components: [row] });
         
         return interaction.reply({
-            embeds: [confirmEmbed],
+            embeds: [createSuccessEmbed(`Sistema configurado no canal ${channel}!`)],
             ephemeral: true
         });
     }
     
-    // ============================================
-    // COMANDO SLASH: /suggestionschannel
-    // ============================================
     if (command === 'suggestionschannel') {
         const channel = interaction.options.getChannel('channel');
         
@@ -1372,51 +1325,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         
         const guildId = interaction.guild.id;
-        if (!suggestionsConfig[guildId]) {
-            suggestionsConfig[guildId] = {};
-        }
+        if (!suggestionsConfig[guildId]) suggestionsConfig[guildId] = {};
         suggestionsConfig[guildId].receiveChannel = channel.id;
         suggestionsConfig[guildId].configuredAt = Date.now();
         saveConfig();
         
         const testEmbed = createEmbed(
             '📋 Canal de Sugestões Configurado',
-            'Este canal receberá todas as sugestões enviadas pelos membros.',
+            'Este canal receberá todas as sugestões enviadas.',
             '#00FF00',
-            [
-                {
-                    name: '📊 Como funciona',
-                    value: 'As sugestões serão postadas aqui automaticamente com reações para votação.',
-                    inline: false
-                },
-                {
-                    name: '👍 Votação',
-                    value: 'Membros podem votar usando as reações 👍 (positivo) e 👎 (negativo).',
-                    inline: false
-                },
-                {
-                    name: '⚙️ Configuração',
-                    value: `Canal configurado por <@${interaction.user.id}>`,
-                    inline: false
-                },
-                {
-                    name: '📌 Status',
-                    value: suggestionsConfig[guildId].suggestionsChannel ? '✅ Sistema completo' : '⚠️ Configure também o canal de sugestões com `/suggestions`',
-                    inline: false
-                }
-            ]
+            [{ name: '👍 Votação', value: 'Membros podem votar com 👍 e 👎.', inline: false }]
         );
         
         await channel.send({ embeds: [testEmbed] });
         
-        const confirmEmbed = createSuccessEmbed(
-            `Canal de recebimento configurado com sucesso!\n\n` +
-            `**Canal de sugestões:** ${suggestionsConfig[guildId].suggestionsChannel ? `<#${suggestionsConfig[guildId].suggestionsChannel}>` : 'Não configurado'}\n` +
-            `**Canal de recebimento:** ${channel}`
-        );
-        
         return interaction.reply({
-            embeds: [confirmEmbed],
+            embeds: [createSuccessEmbed(`Canal de recebimento configurado: ${channel}!`)],
             ephemeral: true
         });
     }
@@ -1427,7 +1351,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
     
     if (interaction.customId === 'send_suggestion') {
-        // ===== INCREMENTAR CONTADOR =====
         totalComandosExecutados++;
         
         const modal = new ModalBuilder()
@@ -1438,14 +1361,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setCustomId('suggestion_content')
             .setLabel('Sua sugestão')
             .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Descreva sua sugestão em detalhes...')
+            .setPlaceholder('Descreva sua sugestão...')
             .setMinLength(10)
             .setMaxLength(1000)
             .setRequired(true);
         
-        const firstRow = new ActionRowBuilder().addComponents(suggestionInput);
-        modal.addComponents(firstRow);
-        
+        modal.addComponents(new ActionRowBuilder().addComponents(suggestionInput));
         return interaction.showModal(modal);
     }
 });
@@ -1455,7 +1376,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isModalSubmit()) return;
     
     if (interaction.customId === 'suggestion_modal') {
-        // ===== INCREMENTAR CONTADOR =====
         totalComandosExecutados++;
         
         const content = interaction.fields.getTextInputValue('suggestion_content');
@@ -1464,39 +1384,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
         
         if (!config || !config.receiveChannel) {
             return interaction.reply({
-                embeds: [createErrorEmbed('Erro na configuração do sistema. Contate um administrador.')],
+                embeds: [createErrorEmbed('Sistema não configurado.')],
                 ephemeral: true
             });
         }
         
         const suggestion = suggestionManager.addSuggestion(guildId, interaction.user.id, content);
-        
         const receiveChannel = interaction.guild.channels.cache.get(config.receiveChannel);
+        
         if (receiveChannel) {
-            const suggestionEmbed = createEmbed(
-                '💡 Nova Sugestão',
-                content,
-                '#5865F2',
-                [
-                    {
-                        name: '👤 Autor',
-                        value: `${interaction.user.tag}`,
-                        inline: true
-                    }
-                ]
-            );
-            
+            const suggestionEmbed = createEmbed('💡 Nova Sugestão', content, '#5865F2', [
+                { name: '👤 Autor', value: `${interaction.user.tag}`, inline: true }
+            ]);
             const sentMessage = await receiveChannel.send({ embeds: [suggestionEmbed] });
             await sentMessage.react('👍');
             await sentMessage.react('👎');
         }
         
-        const confirmEmbed = createSuccessEmbed(
-            `Sua sugestão foi enviada com sucesso!\n\n**ID:** ${suggestion.id}\n**Sugestão:** ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`
-        );
-        
         return interaction.reply({
-            embeds: [confirmEmbed],
+            embeds: [createSuccessEmbed(`Sugestão enviada! ID: ${suggestion.id}`)],
             ephemeral: true
         });
     }
@@ -1514,16 +1420,11 @@ client.once(Events.ClientReady, async () => {
     console.log(`📡 Ping: ${client.ws.ping}ms`);
     console.log('============================================');
     
-    // ===== HEARTBEAT =====
     sendHeartbeat(client);
     setInterval(() => sendHeartbeat(client), 5 * 60 * 1000);
-    // ===== FIM HEARTBEAT =====
     
     client.user.setPresence({
-        activities: [{ 
-            name: '!help para comandos', 
-            type: ActivityType.Watching 
-        }],
+        activities: [{ name: '!help para comandos', type: ActivityType.Watching }],
         status: PresenceUpdateStatus.Online
     });
     
@@ -1531,38 +1432,20 @@ client.once(Events.ClientReady, async () => {
         {
             name: 'suggestions',
             description: 'Configura o canal de sugestões (apenas owner)',
-            options: [
-                {
-                    name: 'channel',
-                    description: 'Canal onde o embed de sugestões será enviado',
-                    type: 7,
-                    required: true,
-                    channel_types: [0]
-                }
-            ]
+            options: [{ name: 'channel', description: 'Canal de sugestões', type: 7, required: true, channel_types: [0] }]
         },
         {
             name: 'suggestionschannel',
-            description: 'Configura o canal de recebimento de sugestões (apenas owner)',
-            options: [
-                {
-                    name: 'channel',
-                    description: 'Canal onde as sugestões serão enviadas',
-                    type: 7,
-                    required: true,
-                    channel_types: [0]
-                }
-            ]
+            description: 'Configura o canal de recebimento (apenas owner)',
+            options: [{ name: 'channel', description: 'Canal de recebimento', type: 7, required: true, channel_types: [0] }]
         }
     ];
     
     try {
-        console.log('📝 Registrando comandos slash...');
         await client.application.commands.set(commands);
-        console.log('✅ Comandos slash registrados com sucesso!');
-        console.log('📋 Comandos registrados: /suggestions, /suggestionschannel');
+        console.log('✅ Comandos slash registrados!');
     } catch (error) {
-        console.error('❌ Erro ao registrar comandos slash:', error);
+        console.error('❌ Erro ao registrar comandos:', error);
     }
     
     await sendStartupMessage();
@@ -1572,137 +1455,139 @@ client.once(Events.ClientReady, async () => {
             { name: '!help', type: ActivityType.Watching },
             { name: '𝙼𝚊𝚍𝚎 𝙱𝚢 𝚈𝟸𝚔_𝙽𝚊𝚝', type: ActivityType.Playing }
         ];
-        
-        const randomStatus = statuses[Math.floor(Math.random() * statuses.length)];
-        
+        const random = statuses[Math.floor(Math.random() * statuses.length)];
         client.user.setPresence({
-            activities: [{ name: randomStatus.name, type: randomStatus.type }],
+            activities: [{ name: random.name, type: random.type }],
             status: PresenceUpdateStatus.Online
         });
     }, 30000);
 });
 
-// Evento quando o bot entra em um novo servidor
 client.on(Events.GuildCreate, async (guild) => {
-    console.log(`🎉 Entrou no servidor: ${guild.name} (${guild.id})`);
-    
-    const channel = guild.systemChannel || 
-                   guild.channels.cache.find(ch => 
-                       ch.type === ChannelType.GuildText && 
-                       ch.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages)
-                   );
-    
+    console.log(`🎉 Entrou no servidor: ${guild.name}`);
+    const channel = guild.systemChannel || guild.channels.cache.find(ch => ch.type === ChannelType.GuildText);
     if (channel) {
-        const welcomeEmbed = createEmbed(
-            '🎉 InsightBot Chegou!',
-            'Obrigado por me adicionar ao seu servidor!',
-            '#5865F2',
-            [
-                {
-                    name: '🚀 Começando',
-                    value: 'Use `!help` para ver todos os comandos disponíveis.',
-                    inline: false
-                },
-                {
-                    name: '⚙️ Configuração',
-                    value: 'Para configurar o sistema de sugestões, use:\n`/suggestions #canal` - Define o canal de sugestões\n`/suggestionschannel #canal` - Define o canal de recebimento',
-                    inline: false
-                },
-                {
-                    name: '📌 Nota',
-                    value: 'Apenas o dono do bot pode usar comandos de configuração.',
-                    inline: false
-                },
-                {
-                    name: '💡 Dica',
-                    value: 'Use `!setup` para ver um guia completo de configuração!',
-                    inline: false
-                }
-            ]
-        );
-        
+        const welcomeEmbed = createEmbed('🎉 InsightBot Chegou!', 'Obrigado por me adicionar! Use `!help` para ver os comandos.', '#5865F2');
         await channel.send({ embeds: [welcomeEmbed] });
     }
 });
 
-// Evento quando o bot é removido de um servidor
 client.on(Events.GuildDelete, (guild) => {
-    console.log(`👋 Removido do servidor: ${guild.name} (${guild.id})`);
-    
+    console.log(`👋 Removido do servidor: ${guild.name}`);
     if (suggestionsConfig[guild.id]) {
         delete suggestionsConfig[guild.id];
         saveConfig();
-        console.log(`🧹 Configurações removidas para o servidor ${guild.name}`);
     }
 });
 
-// Evento para reações em mensagens
-client.on(Events.MessageReactionAdd, async (reaction, user) => {
-    if (user.bot) return;
+// ============================================
+// API PARA A DASHBOARD (DADOS REAIS)
+// ============================================
+const apiApp = express();
+
+function checkApiSecret(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    const validToken = process.env.API_SECRET || 'internal_secret_insightbot_2024';
+    if (token !== validToken) {
+        return res.status(401).json({ error: 'Não autorizado' });
+    }
+    next();
+}
+
+apiApp.get('/api/bot/stats', checkApiSecret, (req, res) => {
+    res.json({
+        online: client.isReady(),
+        uptime: client.uptime,
+        formattedUptime: formatUptime(client.uptime),
+        servers: client.guilds.cache.size,
+        users: client.users.cache.size,
+        ping: client.ws.ping,
+        commands: totalComandosExecutados,
+        version: '2.1.0'
+    });
+});
+
+apiApp.get('/api/guilds', checkApiSecret, (req, res) => {
+    const guilds = client.guilds.cache.map(guild => ({
+        id: guild.id,
+        name: guild.name,
+        icon: guild.icon,
+        memberCount: guild.memberCount,
+        ownerId: guild.ownerId
+    }));
+    res.json(guilds);
+});
+
+apiApp.get('/api/guild/:guildId/channels', checkApiSecret, (req, res) => {
+    const { guildId } = req.params;
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) return res.status(404).json({ error: 'Servidor não encontrado' });
     
-    if (reaction.message.embeds.length > 0) {
-        const embed = reaction.message.embeds[0];
-        if (embed.title === '💡 Nova Sugestão' || embed.title?.includes('Sugestão')) {
-            if (!['👍', '👎'].includes(reaction.emoji.name)) {
-                await reaction.users.remove(user.id);
+    const channels = guild.channels.cache
+        .filter(c => c.type === ChannelType.GuildText)
+        .map(c => ({ id: c.id, name: c.name }))
+        .slice(0, 50);
+    
+    res.json(channels);
+});
+
+apiApp.get('/api/guild/:guildId/config', checkApiSecret, (req, res) => {
+    const { guildId } = req.params;
+    const config = suggestionsConfig[guildId] || { suggestionsChannel: null, receiveChannel: null };
+    res.json(config);
+});
+
+apiApp.post('/api/guild/:guildId/config', checkApiSecret, (req, res) => {
+    const { guildId } = req.params;
+    const { suggestionsChannel, receiveChannel } = req.body;
+    
+    if (!suggestionsConfig[guildId]) suggestionsConfig[guildId] = {};
+    if (suggestionsChannel !== undefined) suggestionsConfig[guildId].suggestionsChannel = suggestionsChannel;
+    if (receiveChannel !== undefined) suggestionsConfig[guildId].receiveChannel = receiveChannel;
+    suggestionsConfig[guildId].configuredAt = Date.now();
+    
+    saveConfig();
+    res.json({ success: true, message: 'Configurações salvas!' });
+});
+
+apiApp.get('/api/guild/:guildId/stats', checkApiSecret, (req, res) => {
+    const { guildId } = req.params;
+    let totalSuggestions = 0;
+    let upvotes = 0;
+    let downvotes = 0;
+    
+    const userSuggestions = suggestionManager.userSuggestions.get(guildId);
+    if (userSuggestions) {
+        for (const suggestions of userSuggestions.values()) {
+            totalSuggestions += suggestions.length;
+            for (const sug of suggestions) {
+                upvotes += sug.votes.up;
+                downvotes += sug.votes.down;
             }
         }
     }
-});
-
-// Tratamento de erros
-process.on('unhandledRejection', (error) => {
-    console.error('❌ Erro não tratado (Promise):', error);
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('❌ Erro não tratado (Exception):', error);
-});
-
-client.on(Events.Error, (error) => {
-    console.error('❌ Erro no cliente Discord:', error);
-});
-
-client.on(Events.ShardError, (error) => {
-    console.error('❌ Erro no shard:', error);
-});
-
-client.on(Events.Warn, (warning) => {
-    console.warn('⚠️ Warning:', warning);
-});
-
-if (process.env.NODE_ENV === 'development') {
-    client.on(Events.Debug, (info) => {
-        console.log('🐛 Debug:', info);
+    
+    res.json({
+        total: totalSuggestions,
+        upvotes: upvotes,
+        downvotes: downvotes,
+        participants: userSuggestions?.size || 0,
+        today: 0
     });
-}
+});
 
 // ============================================
-// FUNÇÕES ADICIONAIS
+// HEALTH CHECK + INICIAR SERVIDORES
 // ============================================
+const UNIFIED_PORT = process.env.PORT || 8080;
 
-setInterval(() => {
-    const now = Date.now();
-    for (const [userId, timestamp] of prefixCooldowns) {
-        if (now > timestamp) {
-            prefixCooldowns.delete(userId);
-        }
-    }
-    console.log('🧹 Cache limpo periodicamente');
-}, 3600000);
+// Servidor principal (API + Health Check)
+const mainApp = express();
+mainApp.use(express.json());
+mainApp.use('/api', apiApp);
 
-setInterval(() => {
-    saveConfig();
-    console.log('💾 Backup automático das configurações realizado');
-}, 1800000);
-
-// ============================================
-// HEALTH CHECK SIMPLES (APENAS PARA O BOT)
-// ============================================
-const healthApp = express();
-const HEALTH_PORT = process.env.PORT || 8080;
-
-healthApp.get('/health', (req, res) => {
+mainApp.get('/health', (req, res) => {
     res.json({ 
         status: 'healthy',
         bot: client.isReady() ? 'online' : 'offline',
@@ -1714,9 +1599,22 @@ healthApp.get('/health', (req, res) => {
     });
 });
 
-healthApp.listen(HEALTH_PORT, () => {
-    console.log(`❤️ Health check rodando na porta ${HEALTH_PORT}`);
+mainApp.listen(UNIFIED_PORT, '0.0.0.0', () => {
+    console.log(`
+╔══════════════════════════════════════════════════════════╗
+║     🚀 INSIGHTBOT - SERVIDOR INICIADO                   ║
+╠══════════════════════════════════════════════════════════╣
+║  📡 API: http://localhost:${UNIFIED_PORT}/api
+║  ❤️ Health: http://localhost:${UNIFIED_PORT}/health
+╚══════════════════════════════════════════════════════════╝
+    `);
 });
 
 // ===== INICIAR O BOT =====
-client.login(TOKEN);
+console.log('🚀 Iniciando InsightBot...');
+client.login(TOKEN).catch(error => {
+    console.error('❌ Erro ao fazer login:', error);
+    process.exit(1);
+});
+
+module.exports = { client, suggestionManager, suggestionsConfig, saveConfig };
